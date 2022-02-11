@@ -12,66 +12,6 @@
 #	define __inline
 #endif
 
-//histogram linked list entry as secondary sorting
-typedef struct HIST_ENTRY_ {
-	int y;
-	int i;
-	int q;
-	int a;
-	struct HIST_ENTRY_ *next;
-	double weight;
-	double value;
-} HIST_ENTRY;
-
-//structure for a node in the color tree
-typedef struct COLOR_NODE_ {
-	int isLeaf;
-	double weight;
-	double priority;
-	int y;
-	int i;
-	int q;
-	int a;
-	int pivotIndex;
-	int startIndex;
-	int endIndex;
-	struct COLOR_NODE_ *left;
-	struct COLOR_NODE_ *right;
-} COLOR_NODE;
-
-//allocator for allocating the linked lists
-typedef struct ALLOCATOR_ {
-	void *allocation;
-	int nextEntryOffset;
-	struct ALLOCATOR_ *next;
-} ALLOCATOR;
-
-//histogram structure
-typedef struct HISTOGRAM_ {
-	ALLOCATOR allocator;
-	HIST_ENTRY *entries[0x20000];
-	int nEntries;
-} HISTOGRAM;
-
-//reduction workspace structure
-typedef struct REDUCTION_ {
-	int nPaletteColors;
-	int nUsedColors;
-	int balance;
-	int colorBalance;
-	int shiftColorBalance;
-	int enhanceColors;
-	int maskColors;
-	int optimization;
-	HISTOGRAM *histogram;
-	HIST_ENTRY **histogramFlat;
-	COLOR_NODE *colorTreeHead;
-	COLOR_NODE *colorBlocks[0x2000];
-	unsigned char paletteRgb[256][3];
-	double lumaTable[512];
-	double gamma;
-} REDUCTION;
-
 //struct for internal processing of color leaves
 typedef struct {
 	double y;
@@ -85,10 +25,10 @@ typedef struct {
 
 void initReduction(REDUCTION *reduction, int balance, int colorBalance, int optimization, int enhanceColors, unsigned int nColors) {
 	memset(reduction, 0, sizeof(REDUCTION));
-	reduction->balance = 60 - balance;
-	reduction->colorBalance = colorBalance;
+	reduction->yWeight = 60 - balance;
+	reduction->iWeight = colorBalance;
 	reduction->optimization = optimization;
-	reduction->shiftColorBalance = 40 - colorBalance;
+	reduction->qWeight = 40 - colorBalance;
 	reduction->enhanceColors = enhanceColors;
 	reduction->nPaletteColors = nColors;
 	reduction->gamma = 1.27;
@@ -119,6 +59,7 @@ void *allocateEntry(ALLOCATOR *allocator, int size) {
 }
 
 void histogramAddColor(HISTOGRAM *histogram, int y, int i, int q, int a, double weight) {
+	if (a == 0) return;
 	int slotIndex = (q + (y * 64 + i) * 4 + 0x60E + a) & 0x1FFFF;
 
 	HIST_ENTRY *slot = histogram->entries[slotIndex];
@@ -161,7 +102,7 @@ void histogramAddColor(HISTOGRAM *histogram, int y, int i, int q, int a, double 
 	}
 }
 
-void encodeColor(COLOR32 rgb, int *yiq) {
+void rgbToYiq(COLOR32 rgb, int *yiq) {
 	double doubleR = (double) (rgb & 0xFF);
 	double doubleG = (double) ((rgb >> 8) & 0xFF);
 	double doubleB = (double) ((rgb >> 16) & 0xFF);
@@ -207,17 +148,17 @@ void encodeColor(COLOR32 rgb, int *yiq) {
 	yiq[0] = yInt;
 	yiq[1] = iInt;
 	yiq[2] = qInt;
-	yiq[3] = 0xFF;
+	yiq[3] = (rgb >> 24) & 0xFF;
 }
 
-void decodeColor(int *rgb, int *in) {
-	double i = (double) in[1];
-	double q = (double) in[2];
+void yiqToRgb(int *rgb, int *yiq) {
+	double i = (double) yiq[1];
+	double q = (double) yiq[2];
 	double y;
 	if(i >= 0.0 || q <= 0.0) {
-		y = (double) in[0];
+		y = (double) yiq[0];
 	} else {
-		y = ((double) in[0]) + (q * i) * 0.00195313;
+		y = ((double) yiq[0]) + (q * i) * 0.00195313;
 	}
 	if(y >= 0.0) {
 		if(y > 511.0) {
@@ -280,12 +221,12 @@ void computeHistogram(REDUCTION *reduction, COLOR32 *img, int width, int height)
 
 	for (int y = 0; y < height; y++) {
 		int yiqLeft[4];
-		encodeColor(img[y * width], yiqLeft);
+		rgbToYiq(img[y * width], yiqLeft);
 		int yLeft = yiqLeft[0];
 
 		for (int x = 0; x < width; x++) {
 			int yiq[4];
-			encodeColor(img[x + y * width], yiq);
+			rgbToYiq(img[x + y * width], yiq);
 
 			int dy = yiq[0] - yLeft;
 			double weight = (double) (16 - abs(16 - abs(dy)) / 8);
@@ -384,9 +325,9 @@ double approximatePrincipalComponent(REDUCTION *reduction, int startIndex, int e
 		HIST_ENTRY *entry = reduction->histogramFlat[i];
 
 		double scaledA = entry->a * 40;
-		double scaledY = reduction->balance * reduction->lumaTable[entry->y];
-		double scaledI = reduction->colorBalance * entry->i;
-		double scaledQ = reduction->shiftColorBalance * entry->q;
+		double scaledY = reduction->yWeight * reduction->lumaTable[entry->y];
+		double scaledI = reduction->iWeight * entry->i;
+		double scaledQ = reduction->qWeight * entry->q;
 		double weight = entry->weight;
 
 		mtx[0][0] += weight * scaledY * scaledY;
@@ -518,7 +459,7 @@ int histEntryComparator(const void *p1, const void *p2) {
 	return 0;
 }
 
-double lengthSquared(double x, double y, double z) {
+double __inline lengthSquared(double x, double y, double z) {
 	return x * x + y * y + z * z;
 }
 
@@ -541,17 +482,17 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 	double principal[4];
 	approximatePrincipalComponent(reduction, colorBlock->startIndex, colorBlock->endIndex, principal);
 
-	int balance = reduction->balance;
-	int colorBalance = reduction->colorBalance;
-	int shiftColorBalance = reduction->shiftColorBalance;
-	int alphaScale = 40;
+	int yWeight = reduction->yWeight;
+	int iWeight = reduction->iWeight;
+	int qWeight = reduction->qWeight;
+	int aWeight = 40;
 
 	for (int i = colorBlock->startIndex; i < colorBlock->endIndex; i++) {
 		HIST_ENTRY *histEntry = reduction->histogramFlat[i];
-		double value = histEntry->i * colorBalance * principal[1]
-			+ histEntry->q * shiftColorBalance * principal[2]
-			+ histEntry->a * alphaScale * principal[3]
-			+ reduction->lumaTable[histEntry->y] * balance * principal[0];
+		double value = histEntry->i * iWeight * principal[1]
+			+ histEntry->q * qWeight * principal[2]
+			+ histEntry->a * aWeight * principal[3]
+			+ reduction->lumaTable[histEntry->y] * yWeight * principal[0];
 
 		histEntry->value = value;
 		if (value >= greatestValue) {
@@ -580,9 +521,9 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 	for (int i = 0; i < nColors; i++) {
 		HIST_ENTRY *entry = thisHistogram[i];
 		double weight = entry->weight;
-		double cy = reduction->balance * reduction->lumaTable[entry->y];
-		double ci = reduction->colorBalance * entry->i;
-		double cq = reduction->shiftColorBalance * entry->q;
+		double cy = reduction->yWeight * reduction->lumaTable[entry->y];
+		double ci = reduction->iWeight * entry->i;
+		double cq = reduction->qWeight * entry->q;
 
 		colorInfo[i].y = weight * cy;
 		colorInfo[i].i = weight * ci;
@@ -609,13 +550,13 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 		entry->a = totalA;
 	}
 	double avgY = totalY / totalWeight;
-	avgY = pow((avgY / (double) reduction->balance) * 0.00195695, 1.0 / reduction->gamma);
+	avgY = pow((avgY / (double) reduction->yWeight) * 0.00195695, 1.0 / reduction->gamma);
 
 	//compute average color
-	int initA = (int) ((totalA / totalWeight) / 40.0 + 0.5);
-	int initQ = (int) ((totalQ / totalWeight) / reduction->shiftColorBalance + 0.5);
-	int initI = (int) ((totalI / totalWeight) / reduction->colorBalance + 0.5);
 	int initY = (int) (avgY * 511.0 + 0.5);
+	int initI = (int) ((totalI / totalWeight) / reduction->iWeight + 0.5);
+	int initQ = (int) ((totalQ / totalWeight) / reduction->qWeight + 0.5);
+	int initA = (int) ((totalA / totalWeight) / 40.0 + 0.5);
 
 	colorBlock->y = initY;
 	colorBlock->i = initI;
@@ -672,6 +613,10 @@ void optimizePalette(REDUCTION *reduction) {
 	treeHead->endIndex = reduction->histogram->nEntries;
 
 	reduction->colorTreeHead = treeHead;
+	if (reduction->histogram->nEntries == 0) {
+		reduction->nUsedColors = 0;
+		return;
+	}
 	setupLeaf(reduction, treeHead);
 
 	int numberOfTreeElements = 0;
@@ -730,8 +675,8 @@ void optimizePalette(REDUCTION *reduction) {
 
 			if (colorBlock->left != NULL && colorBlock->right != NULL) {
 				int decodedLeft[4], decodedRight[4];
-				decodeColor(decodedLeft, &colorBlock->left->y);
-				decodeColor(decodedRight, &colorBlock->right->y);
+				yiqToRgb(decodedLeft, &colorBlock->left->y);
+				yiqToRgb(decodedRight, &colorBlock->right->y);
 				int leftAlpha = colorBlock->left->a;
 				int rightAlpha = colorBlock->right->a;
 				COLOR32 leftRgb = decodedLeft[0] | (decodedLeft[1] << 8) | (decodedLeft[2] << 16);
@@ -824,7 +769,7 @@ void paletteToArray(REDUCTION *reduction) {
 			int y = block->y, i = block->i, q = block->q;
 			int yiq[] = { y, i, q, 0xFF };
 			int rgb[4];
-			decodeColor(rgb, yiq);
+			yiqToRgb(rgb, yiq);
 
 			reduction->paletteRgb[ofs][0] = rgb[0];
 			reduction->paletteRgb[ofs][1] = rgb[1];
@@ -879,9 +824,9 @@ int createPaletteSlow(COLOR32 *img, int width, int height, COLOR32 *pal, unsigne
 	paletteToArray(reduction);
 
 	for (unsigned int i = 0; i < nColors; i++) {
-		unsigned char r = reduction->paletteRgb[i][0];
-		unsigned char g = reduction->paletteRgb[i][1];
-		unsigned char b = reduction->paletteRgb[i][2];
+		uint8_t r = reduction->paletteRgb[i][0];
+		uint8_t g = reduction->paletteRgb[i][1];
+		uint8_t b = reduction->paletteRgb[i][2];
 		pal[i] = r | (g << 8) | (b << 16);
 	}
 
@@ -893,7 +838,7 @@ int createPaletteSlow(COLOR32 *img, int width, int height, COLOR32 *pal, unsigne
 
 typedef struct {
 	COLOR32 rgb[64];
-	unsigned char indices[64];
+	uint8_t indices[64];
 	int palette[16][4]; //YIQ
 	int useCounts[16];
 	unsigned short palIndex; //points to the index of the tile that is maintaining the palette this tile uses
@@ -916,7 +861,7 @@ int findClosestPaletteColorRGB(int *palette, int nColors, COLOR32 col, int *outD
 	int leastIndex = 0;
 	for (int i = 0; i < nColors; i++) {
 		int y2, u2, v2;
-		decodeColor(rgb, palette + i * 4);
+		yiqToRgb(rgb, palette + i * 4);
 		convertRGBToYUV(rgb[0], rgb[1], rgb[2], &y2, &u2, &v2);
 
 		int dy = y2 - y, du = u2 - u, dv = v2 - v;
@@ -932,7 +877,7 @@ int findClosestPaletteColorRGB(int *palette, int nColors, COLOR32 col, int *outD
 
 int findClosestPaletteColor(int *palette, int nColors, int *col, int *outDiff) {
 	int rgb[4];
-	decodeColor(rgb, col);
+	yiqToRgb(rgb, col);
 	return findClosestPaletteColorRGB(palette, nColors, rgb[0] | (rgb[1] << 8) | (rgb[2] << 16), outDiff);
 }
 
@@ -1001,7 +946,7 @@ done:
 }
 
 void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
-							int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
+							  int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
 	if (nPalettes == 0) return;
 	if (nPalettes == 1) {
 		if (paletteOffset) {
@@ -1039,13 +984,13 @@ void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *d
 			optimizePalette(reduction);
 			paletteToArray(reduction);
 			for (int i = 0; i < 16; i++) {
-				unsigned char *col = &reduction->paletteRgb[i][0];
+				uint8_t *col = &reduction->paletteRgb[i][0];
 				palBuf[i] = col[0] | (col[1] << 8) | (col[2] << 16);
 			}
 
 			for (int i = 0; i < 16; i++) {
 				int yiq[4];
-				encodeColor(palBuf[i], yiq);
+				rgbToYiq(palBuf[i], yiq);
 				tile->palette[i][0] = yiq[0];
 				tile->palette[i][1] = yiq[1];
 				tile->palette[i][2] = yiq[2];
@@ -1112,10 +1057,10 @@ void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *d
 		COLOR32 palBuf[16];
 		for (int i = 0; i < 15; i++) {
 			int *yiqDest = &palTile->palette[i][0];
-			unsigned char *srcRgb = &reduction->paletteRgb[i][0];
+			uint8_t *srcRgb = &reduction->paletteRgb[i][0];
 			COLOR32 rgb = srcRgb[0] | (srcRgb[1] << 8) | (srcRgb[2] << 16);
 			palBuf[i] = rgb;
-			encodeColor(rgb, yiqDest);
+			rgbToYiq(rgb, yiqDest);
 		}
 		palTile->nUsedColors = reduction->nUsedColors;
 		palTile->nSwallowed += nSwitched;
@@ -1129,7 +1074,7 @@ void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *d
 
 			for (int j = 0; j < 64; j++) {
 				COLOR32 col = tile->rgb[j];
-				int index = findClosestPaletteColorRGB(&tile->palette[0][0], tile->nUsedColors, tile->rgb[i], NULL);
+				int index = findClosestPaletteColorRGB(&tile->palette[0][0], tile->nUsedColors, tile->rgb[j], NULL);
 				if ((col >> 24) == 0) index = 15;
 				tile->indices[j] = index;
 				rep->useCounts[index]++;
@@ -1161,7 +1106,7 @@ void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *d
 		if(paletteOffset == 0) palBuf[0] = 0xFF00FF;
 		for (int j = 0; j < 15; j++) {
 			int rgb[4];
-			decodeColor(rgb, &t->palette[j][0]);
+			yiqToRgb(rgb, &t->palette[j][0]);
 			palBuf[j + outputOffs] = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
 		}
 		qsort(palBuf + 1, nColsPerPalette, 4, lightnessCompare);
@@ -1186,9 +1131,9 @@ int createPaletteSlowEx(COLOR32 *img, int width, int height, COLOR32 *pal, unsig
 	paletteToArray(reduction);
 
 	for (unsigned int i = 0; i < nColors; i++) {
-		unsigned char r = reduction->paletteRgb[i][0];
-		unsigned char g = reduction->paletteRgb[i][1];
-		unsigned char b = reduction->paletteRgb[i][2];
+		uint8_t r = reduction->paletteRgb[i][0];
+		uint8_t g = reduction->paletteRgb[i][1];
+		uint8_t b = reduction->paletteRgb[i][2];
 		pal[i] = r | (g << 8) | (b << 16);
 	}
 	destroyReduction(reduction);
@@ -1203,4 +1148,241 @@ int createPaletteSlowEx(COLOR32 *img, int width, int height, COLOR32 *pal, unsig
 	}
 
 	return nProduced;
+}
+
+int diffuseCurveY(int x) {
+	if (x < 0) return -diffuseCurveY(-x);
+	if (x <= 8) return x;
+	return (int) (8.5f + pow(x - 8, 0.9) * 0.94140625);
+}
+
+int diffuseCurveI(int x) {
+	if (x < 0) return -diffuseCurveI(-x);
+	if (x <= 8) return x;
+	return (int) (8.5f + pow(x - 8, 0.85) * 0.98828125);
+}
+
+int diffuseCurveQ(int x) {
+	if (x < 0) return -diffuseCurveQ(-x);
+	if (x <= 8) return x;
+	return (int) (8.5f + pow(x - 8, 0.85) * 0.89453125);
+}
+
+int closestPaletteYiq(REDUCTION *reduction, int *yiqColor, int *palette, int nColors) {
+	double yw2 = reduction->yWeight * reduction->yWeight;
+	double iw2 = reduction->iWeight * reduction->iWeight;
+	double qw2 = reduction->qWeight * reduction->qWeight;
+
+	double minDistance = 1e32;
+	int minIndex = 0;
+	for (int i = 0; i < nColors; i++) {
+		int *yiq = palette + i * 4;
+
+		double dy = reduction->lumaTable[yiq[0]] - reduction->lumaTable[yiqColor[0]];
+		double di = yiq[1] - yiqColor[1];
+		double dq = yiq[2] - yiqColor[2];
+		double dst = dy * dy * yw2 + di * di * iw2 + dq * dq * qw2;
+		if (dst < minDistance) {
+			minDistance = dst;
+			minIndex = i;
+			if (minDistance == 0.0) return i;
+		}
+	}
+
+	return minIndex;
+}
+
+void ditherImagePalette(COLOR32 *img, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse) {
+	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
+	initReduction(reduction, 20, 20, 15, 0, nColors);
+
+	//convert palette to YIQ
+	int *yiqPalette = (int *) calloc(nColors, 4 * sizeof(int));
+	for (int i = 0; i < nColors; i++) {
+		rgbToYiq(palette[i], yiqPalette + i * 4);
+	}
+
+	//allocate row buffers for color and diffuse.
+	int *thisRow = (int *) calloc(width + 2, 16);
+	int *lastRow = (int *) calloc(width + 2, 16);
+	int *thisDiffuse = (int *) calloc(width + 2, 16);
+	int *nextDiffuse = (int *) calloc(width + 2, 16);
+
+	//fill the last row with the first row, just to make sure we don't run out of bounds
+	for (int i = 0; i < width; i++) {
+		rgbToYiq(img[i], lastRow + 4 * (i + 1));
+	}
+	memcpy(lastRow, lastRow + 4, 16);
+	memcpy(lastRow + 4 * (width + 1), lastRow + 4 * width, 16);
+
+	//start dithering, do so in a serpentine path.
+	for (int y = 0; y < height; y++) {
+
+		//which direction?
+		int hDirection = (y & 1) ? -1 : 1;
+		COLOR32 *rgbRow = img + y * width;
+		for (int x = 0; x < width; x++) {
+			rgbToYiq(rgbRow[x], thisRow + 4 * (x + 1));
+		}
+		memcpy(thisRow, thisRow + 4, 16);
+		memcpy(thisRow + 4 * (width + 1), thisRow + 4 * width, 16);
+
+		//scan across
+		int startPos = (hDirection == 1) ? 0 : (width - 1);
+		int x = startPos;
+		for (int xPx = 0; xPx < width; xPx++) {
+			//take a sample of pixels nearby. This will be a gauge of variance around this pixel, and help
+			//determine if dithering should happen. Weight the sampled pixels with respect to distance from center.
+
+			int colorY = (thisRow[(x + 1) * 4 + 0] * 3 + thisRow[(x + 2) * 4 + 0] * 3 + thisRow[x * 4 + 0] * 3 + lastRow[(x + 1) * 4 + 0] * 3
+						  + lastRow[x * 4 + 0] * 2 + lastRow[(x + 2) * 4 + 0] * 2) / 16;
+			int colorI = (thisRow[(x + 1) * 4 + 1] * 3 + thisRow[(x + 2) * 4 + 1] * 3 + thisRow[x * 4 + 1] * 3 + lastRow[(x + 1) * 4 + 1] * 3
+						  + lastRow[x * 4 + 1] * 2 + lastRow[(x + 2) * 4 + 1] * 2) / 16;
+			int colorQ = (thisRow[(x + 1) * 4 + 2] * 3 + thisRow[(x + 2) * 4 + 2] * 3 + thisRow[x * 4 + 2] * 3 + lastRow[(x + 1) * 4 + 2] * 3
+						  + lastRow[x * 4 + 2] * 2 + lastRow[(x + 2) * 4 + 2] * 2) / 16;
+			int colorA = thisRow[(x + 1) * 4 + 3];
+
+			if (touchAlpha && binaryAlpha) {
+				if (colorA < 128) {
+					colorY = 0;
+					colorI = 0;
+					colorQ = 0;
+					colorA = 0;
+				}
+			}
+
+			//match it to a palette color. We'll measure distance to it as well.
+			int colorYiq[] = { colorY, colorI, colorQ, colorA };
+			int matched = c0xp + closestPaletteYiq(reduction, colorYiq, yiqPalette + c0xp * 4, nColors - c0xp);
+			if (colorA == 0 && c0xp) matched = 0;
+
+			//measure distance. From middle color to sampled color, and from palette color to sampled color.
+			int *matchedYiq = yiqPalette + matched * 4;
+			double paletteDy = reduction->lumaTable[matchedYiq[0]] - reduction->lumaTable[colorY];
+			int paletteDi = matchedYiq[1] - colorI;
+			int paletteDq = matchedYiq[2] - colorQ;
+			double paletteDistance = paletteDy * paletteDy * reduction->yWeight * reduction->yWeight +
+				paletteDi * paletteDi * reduction->iWeight * reduction->iWeight +
+				paletteDq * paletteDq * reduction->qWeight * reduction->qWeight;
+
+			//now measure distance from the actual color to its average surroundings
+			int centerY = thisRow[(x + 1) * 4 + 0];
+			int centerI = thisRow[(x + 1) * 4 + 1];
+			int centerQ = thisRow[(x + 1) * 4 + 2];
+			int centerA = thisRow[(x + 1) * 4 + 3];
+			int centerYiq[] = { centerY, centerI, centerQ, centerA };
+
+			double centerDy = reduction->lumaTable[centerY] - reduction->lumaTable[colorY];
+			int centerDi = centerI - colorI;
+			int centerDq = centerQ - colorQ;
+			double centerDistance = centerDy * centerDy * reduction->yWeight * reduction->yWeight +
+				centerDi * centerDi * reduction->iWeight * reduction->iWeight +
+				centerDq * centerDq * reduction->qWeight * reduction->qWeight;
+
+			//now test: Should we dither?
+			double balanceSquare = reduction->yWeight * reduction->yWeight;
+			if (centerDistance < 110.0 * balanceSquare && paletteDistance >  2.0 * balanceSquare) {
+				//Yes, we should dither :)
+
+				int diffuseY = (int) (thisDiffuse[(x + 1) * 4 + 0] * diffuse / 16); //correct for Floyd-Steinberg coefficients
+				int diffuseI = (int) (thisDiffuse[(x + 1) * 4 + 1] * diffuse / 16);
+				int diffuseQ = (int) (thisDiffuse[(x + 1) * 4 + 2] * diffuse / 16);
+				int diffuseA = (int) (thisDiffuse[(x + 1) * 4 + 3] * diffuse / 16);
+
+				if (!touchAlpha || binaryAlpha) diffuseA = 0; //don't diffuse alpha if no alpha channel, or we're told not to
+
+				colorY += diffuseCurveY(diffuseY);
+				colorI += diffuseCurveI(diffuseI);
+				colorQ += diffuseCurveQ(diffuseQ);
+				colorA += diffuseA;
+				if (colorY < 0) { //clamp just in case
+					colorY = 0;
+					colorI = 0;
+					colorQ = 0;
+				} else if (colorY > 511) {
+					colorY = 511;
+					colorI = 0;
+					colorQ = 0;
+				}
+
+				if (colorA < 0) colorA = 0;
+				else if (colorA > 255) colorA = 255;
+
+				//match to palette color
+				int diffusedYiq[] = { colorY, colorI, colorQ, colorA };
+				matched = c0xp + closestPaletteYiq(reduction, diffusedYiq, yiqPalette + c0xp * 4, nColors - c0xp);
+				if (diffusedYiq[3] < 128 && c0xp) matched = 0;
+				COLOR32 chosen = (palette[matched] & 0xFFFFFF) | (colorA << 24);
+				img[x + y * width] = chosen;
+
+				int *chosenYiq = yiqPalette + matched * 4;
+				int offY = colorY - chosenYiq[0];
+				int offI = colorI - chosenYiq[1];
+				int offQ = colorQ - chosenYiq[2];
+				int offA = colorA - chosenYiq[3];
+
+				//now diffuse to neighbors
+				int *diffNextPixel = thisDiffuse + (x + 1 + hDirection) * 4 + 0;
+				int *diffDownPixel = nextDiffuse + (x + 1) * 4 + 0;
+				int *diffNextDownPixel = nextDiffuse + (x + 1 + hDirection) * 4 + 0;
+				int *diffBackDownPixel = nextDiffuse + (x + 1 - hDirection) * 4 + 0;
+
+				if (colorA >= 128 || !binaryAlpha) { //don't dither if there's no alpha channel and this is transparent!
+					diffNextPixel[0] += offY * 7;
+					diffNextPixel[1] += offI * 7;
+					diffNextPixel[2] += offQ * 7;
+					diffNextPixel[3] += offA * 7;
+					diffDownPixel[0] += offY * 5;
+					diffDownPixel[1] += offI * 5;
+					diffDownPixel[2] += offQ * 5;
+					diffDownPixel[3] += offA * 5;
+					diffBackDownPixel[0] += offY * 3;
+					diffBackDownPixel[1] += offI * 3;
+					diffBackDownPixel[2] += offQ * 3;
+					diffBackDownPixel[3] += offA * 3;
+					diffNextDownPixel[0] += offY * 1;
+					diffNextDownPixel[1] += offI * 1;
+					diffNextDownPixel[2] += offQ * 1;
+					diffNextDownPixel[3] += offA * 1;
+				}
+
+			} else {
+				//anomaly in the picture, just match the original color. Don't diffuse, it'll cause issues.
+				//That or the color is pretty homogeneous here, so dithering is bad anyway.
+				if (c0xp && touchAlpha) {
+					if (centerYiq[3] < 128) {
+						centerYiq[0] = 0;
+						centerYiq[1] = 0;
+						centerYiq[2] = 0;
+						centerYiq[3] = 0;
+					}
+				}
+
+				matched = c0xp + closestPaletteYiq(reduction, centerYiq, yiqPalette + c0xp * 4, nColors - c0xp);
+				if (c0xp && centerYiq[3] < 128) matched = 0;
+				COLOR32 chosen = (palette[matched] & 0xFFFFFF) | (centerYiq[3] << 24);
+				img[x + y * width] = chosen;
+			}
+
+			x += hDirection;
+		}
+
+		//swap row buffers
+		int *temp = thisRow;
+		thisRow = lastRow;
+		lastRow = temp;
+		temp = nextDiffuse;
+		nextDiffuse = thisDiffuse;
+		thisDiffuse = temp;
+		memset(nextDiffuse, 0, 16 * (width + 2));
+	}
+
+	free(yiqPalette);
+	free(thisRow);
+	free(lastRow);
+	free(thisDiffuse);
+	free(nextDiffuse);
+
+	destroyReduction(reduction);
+	free(reduction);
 }

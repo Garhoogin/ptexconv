@@ -86,7 +86,8 @@ int convertPalette(CREATEPARAMS *params) {
 
 	//allocate texel space.
 	int nBytes = width * height * bitsPerPixel / 8;
-	unsigned char *txel = (unsigned char *) calloc(nBytes, 1);
+	uint8_t *txel = (uint8_t *) calloc(nBytes, 1);
+	if (params->dither) ditherImagePalette(params->px, width, height, palette, nColors, 0, 1, hasTransparent, params->diffuseAmount);
 
 	//write texel data.
 	for (int i = 0; i < width * height; i++) {
@@ -95,13 +96,6 @@ int convertPalette(CREATEPARAMS *params) {
 		RGB error;
 		if (p & 0xFF000000) index = closestpalette(*(RGB *) &p, (RGB *) palette + hasTransparent, nColors - hasTransparent, &error) + hasTransparent;
 		txel[i / pixelsPerByte] |= index << (bitsPerPixel * (i & (pixelsPerByte - 1)));
-		if (params->dither) {
-			COLOR32 back = palette[index];
-			int errorRed = (back & 0xFF) - (p & 0xFF);
-			int errorGreen = ((back >> 8) & 0xFF) - ((p >> 8) & 0xFF);
-			int errorBlue = ((back >> 16) & 0xFF) - ((p >> 16) & 0xFF);
-			doDiffuse(i, width, height, params->px, -errorRed, -errorGreen, -errorBlue, 0, params->diffuseAmount);
-		}
 	}
 
 	//update texture info
@@ -155,7 +149,8 @@ int convertTranslucent(CREATEPARAMS *params) {
 
 	//allocate texel space.
 	int nBytes = width * height;
-	unsigned char *txel = (unsigned char *) calloc(nBytes, 1);
+	uint8_t *txel = (uint8_t *) calloc(nBytes, 1);
+	if (params->dither) ditherImagePalette(params->px, width, height, palette, nColors, 0, 0, 0, params->diffuseAmount);
 
 	//write texel data.
 	for (int i = 0; i < width * height; i++) {
@@ -164,13 +159,10 @@ int convertTranslucent(CREATEPARAMS *params) {
 		int index = closestpalette(*(RGB *) &p, (RGB *) palette, nColors, &error);
 		int alpha = (((p >> 24) & 0xFF) * alphaMax + 127) / 255;
 		txel[i] = index | (alpha << alphaShift);
-		if (params->dither) {
-			COLOR32 back = palette[index];
-			int errorRed = (back & 0xFF) - (p & 0xFF);
-			int errorGreen = ((back >> 8) & 0xFF) - ((p >> 8) & 0xFF);
-			int errorBlue = ((back >> 16) & 0xFF) - ((p >> 16) & 0xFF);
-			int errorAlpha = ((back >> 24) & 0xFF) - ((p >> 24) & 0xFF);
-			doDiffuse(i, width, height, params->px, -errorRed, -errorGreen, -errorBlue, params->ditherAlpha ? -errorAlpha : 0, params->diffuseAmount);
+		if (params->ditherAlpha) {
+			int backAlpha = (alpha * 255 + (alphaMax >> 1)) / alphaMax;
+			int errorAlpha = backAlpha - ((p >> 24) & 0xFF);
+			doDiffuse(i, width, height, params->px, 0, 0, 0, -errorAlpha, params->diffuseAmount);
 		}
 	}
 
@@ -194,7 +186,7 @@ int convertTranslucent(CREATEPARAMS *params) {
 	return 0;
 }
 
-//blend two colors together by weight.
+//blend two colors together by weight. (out of 8)
 COLOR32 blend(COLOR32 col1, int weight1, COLOR32 col2, int weight2) {
 	int r1 = col1 & 0xFF;
 	int g1 = (col1 >> 8) & 0xFF;
@@ -213,13 +205,13 @@ volatile int _globFinal = 0;
 volatile int _globFinished = 0;
 
 typedef struct {
-	unsigned char rgb[64];
-	unsigned short used;
-	unsigned short mode;
-	COLOR palette[4];
-	unsigned short paletteIndex;
-	unsigned char transparentPixels; //1 or 0
-	unsigned char duplicate; //1 or 0
+	uint8_t rgb[64];           //the tile's initial RGBA color data
+	uint16_t used;             //marks a used tile
+	uint16_t mode;             //the tile's working palette mode
+	COLOR palette[4];          //the tile's initial color palette
+	uint16_t paletteIndex;     //the tile's working palette index
+	uint8_t transparentPixels; //number of transparent pixels
+	uint8_t duplicate;         //is duplicate?
 } TILEDATA;
 
 void getColorBounds(COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) {
@@ -263,7 +255,8 @@ void getColorBounds(COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) 
 	}
 
 	COLOR32 cols[2];
-	getColorEndPoints(px, nPx, cols);
+	int nCol = createPaletteSlowEx(px, 4, nPx / 4, cols, 2, 20, 20, 0, 1);
+	if (nCol < 2) cols[1] = cols[0];
 	*colorMin = cols[0];
 	*colorMax = cols[1];
 
@@ -303,42 +296,46 @@ void choosePaletteAndMode(TILEDATA *tile) {
 	if (tile->transparentPixels) {
 		COLOR32 mid = blend(colorMin, 4, colorMax, 4);
 		COLOR32 palette[] = { colorMax, mid, colorMin, 0 };
+		COLOR32 paletteFull[4];
+
 		int error = computeLMS((COLOR32 *) tile->rgb, palette, 1);
+		int nFull = createPaletteSlowEx((COLOR32 *) tile->rgb, 4, 4, paletteFull, 3, 20, 20, 0, 0);
 		//if error <= 24, then these colors are good enough
-		if (error <= 24) {
+		if (error <= 24 || nFull <= 2) {
 			tile->palette[0] = ColorConvertToDS(colorMax);
 			tile->palette[1] = ColorConvertToDS(colorMin);
 			tile->palette[2] = 0;
 			tile->palette[3] = 0;
 			tile->mode = 0x4000;
 		} else {
-			createPaletteSlow((COLOR32 *) tile->rgb, 4, 4, palette, 4);
-			//palette[0] = 0;
 			//swap index 3 and 0, 2 and 1
-			tile->palette[0] = ColorConvertToDS(palette[3]);
-			tile->palette[1] = ColorConvertToDS(palette[2]);
-			tile->palette[2] = ColorConvertToDS(palette[1]);
-			tile->palette[3] = ColorConvertToDS(palette[0]);
+			tile->palette[0] = ColorConvertToDS(paletteFull[2]); //entry 3 empty, double up entry 2
+			tile->palette[1] = ColorConvertToDS(paletteFull[1]);
+			tile->palette[2] = ColorConvertToDS(paletteFull[2]);
+			tile->palette[3] = ColorConvertToDS(paletteFull[0]);
 			tile->mode = 0x0000;
 		}
 	} else {
 		COLOR32 mid1 = blend(colorMin, 5, colorMax, 3);
 		COLOR32 mid2 = blend(colorMin, 3, colorMax, 5);
 		COLOR32 palette[] = { colorMax, mid2, mid1, colorMin };
+		COLOR32 paletteFull[4];
+
 		int error = computeLMS((COLOR32 *) tile->rgb, palette, 0);
-		if (error <= 24) {
+		int nFull = createPaletteSlowEx((COLOR32 *) tile->rgb, 4, 4, paletteFull, 4, 20, 20, 0, 0);
+		if (error <= 24 || nFull <= 2) {
 			tile->palette[0] = ColorConvertToDS(colorMax);
 			tile->palette[1] = ColorConvertToDS(colorMin);
 			tile->palette[2] = 0;
 			tile->palette[3] = 0;
 			tile->mode = 0xC000;
 		} else {
-			createPaletteSlow((COLOR32 *) tile->rgb, 4, 4, (COLOR32 *) palette, 4);
 			//swap index 3 and 0, 2 and 1
-			tile->palette[0] = ColorConvertToDS(palette[3]);
-			tile->palette[1] = ColorConvertToDS(palette[2]);
-			tile->palette[2] = ColorConvertToDS(palette[1]);
-			tile->palette[3] = ColorConvertToDS(palette[0]);;
+			if (nFull < 4) paletteFull[0] = paletteFull[1];
+			tile->palette[0] = ColorConvertToDS(paletteFull[3]);
+			tile->palette[1] = ColorConvertToDS(paletteFull[1]);
+			tile->palette[2] = ColorConvertToDS(paletteFull[2]);
+			tile->palette[3] = ColorConvertToDS(paletteFull[0]);
 			tile->mode = 0x8000;
 		}
 	}
@@ -433,13 +430,13 @@ TILEDATA *createTileData(COLOR32 *px, int tilesX, int tilesY) {
 	return data;
 }
 
-int getColorsFromTable(unsigned char type) {
+int getColorsFromTable(uint8_t type) {
 	if (type == 0) return 0;
 	if (type == 2 || type == 8) return 2;
 	return 4;
 }
 
-unsigned short getModeFromTable(unsigned char type) {
+uint16_t getModeFromTable(uint8_t type) {
 	if (type == 1) return 0x0000;
 	if (type == 2) return 0x4000;
 	if (type == 4) return 0x8000;
@@ -447,24 +444,26 @@ unsigned short getModeFromTable(unsigned char type) {
 	return 0;
 }
 
-int computePaletteDifference(COLOR32 *pal1, COLOR32 *pal2, int nColors) {
+int computePaletteDifference(COLOR32 *pal1, COLOR32 *pal2, int nColors, int nMaxError) {
 	int total = 0;
 
 	for (int i = 0; i < nColors; i++) {
 		total += computeColorDifference(pal1[i], pal2[i]);
+		if (total >= nMaxError) return nMaxError;
+		if (nColors == 2 && total * 2 >= nMaxError) return nMaxError;
 	}
 
 	if (nColors == 2) total *= 2;
 	return total;
 }
 
-int findClosestPalettes(COLOR *palette, unsigned char *colorTable, int nColors, int *colorIndex1, int *colorIndex2) {
+int findClosestPalettes(COLOR *palette, uint8_t *colorTable, int nColors, int *colorIndex1, int *colorIndex2) {
 	//determine which two palettes are the most similar. For 2-color palettes, multiply difference by 2.
 	int leastDistance = 0x10000000;
 	int idx1 = 0;
 
-	while (idx1 <= nColors) {
-		unsigned char type1 = colorTable[idx1];
+	while (idx1 < nColors) {
+		uint8_t type1 = colorTable[idx1];
 		if (type1 == 0) break;
 		int nColorsInThisPalette = 2;
 		if (type1 == 4 || type1 == 1) {
@@ -474,7 +473,7 @@ int findClosestPalettes(COLOR *palette, unsigned char *colorTable, int nColors, 
 		//start searching forward.
 		int idx2 = idx1 + nColorsInThisPalette;
 		while (idx2 + nColorsInThisPalette <= nColors) {
-			unsigned char type2 = colorTable[idx2];
+			uint8_t type2 = colorTable[idx2];
 			if (!type2) break;
 			int nColorsInSecondPalette = getColorsFromTable(type2);
 			if (type2 != type1) {
@@ -484,12 +483,12 @@ int findClosestPalettes(COLOR *palette, unsigned char *colorTable, int nColors, 
 
 			//same type, let's compare.
 			COLOR32 expandPal1[4], expandPal2[4];
-			unsigned short mode = getModeFromTable(type1);
+			uint16_t mode = getModeFromTable(type1);
 			for (int i = 0; i < nColorsInThisPalette; i++) {
 				expandPal1[i] = ColorConvertFromDS(palette[idx1 + i]);
 				expandPal2[i] = ColorConvertFromDS(palette[idx2 + i]);
 			}
-			int dst = computePaletteDifference(expandPal1, expandPal2, nColorsInThisPalette);
+			int dst = computePaletteDifference(expandPal1, expandPal2, nColorsInThisPalette, leastDistance);
 			if (dst < leastDistance) {
 				leastDistance = dst;
 				*colorIndex1 = idx1;
@@ -505,7 +504,7 @@ int findClosestPalettes(COLOR *palette, unsigned char *colorTable, int nColors, 
 	return leastDistance;
 }
 
-void mergePalettes(TILEDATA *tileData, int nTiles, COLOR *palette, int paletteIndex, unsigned short palettesMode) {
+void mergePalettes(TILEDATA *tileData, int nTiles, COLOR *palette, int paletteIndex, uint16_t palettesMode) {
 	//count the number of tiles that use this palette.
 	int nUsedTiles = 0;
 	for (int i = 0; i < nTiles; i++) {
@@ -529,38 +528,23 @@ void mergePalettes(TILEDATA *tileData, int nTiles, COLOR *palette, int paletteIn
 	if (palettesMode == 0x0000) {
 		//transparent, full color
 		createPaletteSlow(px, 4, 4 * nUsedTiles, expandPal + 1, 3);
-		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[3]);
-		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[2]);
-		palette[paletteIndex * 2 + 2] = ColorConvertToDS(expandPal[1]);
-		palette[paletteIndex * 2 + 3] = 0;
+		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[2]); //don't waste this slot
+		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[1]);
+		palette[paletteIndex * 2 + 2] = ColorConvertToDS(expandPal[2]);
+		palette[paletteIndex * 2 + 3] = ColorConvertToDS(expandPal[0]);
 	} else if (palettesMode == 0x4000 || palettesMode == 0xC000) {
 		//transparent, interpolated, and opaque, interpolated
-		//just average all the palettes consumed.
-		int r1 = 0, g1 = 0, b1 = 0, r2 = 0, g2 = 0, b2 = 0;
-		for (int i = 0; i < nTiles; i++) {
-			if (tileData[i].paletteIndex != paletteIndex) continue;
-			COLOR32 c1 = ColorConvertFromDS(tileData[i].palette[0]), c2 = ColorConvertFromDS(tileData[i].palette[1]);
-			r1 += c1 & 0xFF;
-			r2 += c2 & 0xFF;
-			g1 += (c1 >> 8) & 0xFF;
-			g2 += (c2 >> 8) & 0xFF;
-			b1 += (c1 >> 16) & 0xFF;
-			b2 += (c2 >> 16) & 0xFF;
-		}
-		r1 = (r1 + (nUsedTiles >> 1)) / nUsedTiles;
-		g1 = (g1 + (nUsedTiles >> 1)) / nUsedTiles;
-		b1 = (b1 + (nUsedTiles >> 1)) / nUsedTiles;
-		r2 = (r2 + (nUsedTiles >> 1)) / nUsedTiles;
-		g2 = (g2 + (nUsedTiles >> 1)) / nUsedTiles;
-		b2 = (b2 + (nUsedTiles >> 1)) / nUsedTiles;
-		palette[paletteIndex * 2 + 0] = ColorConvertToDS(r1 | (g1 << 8) | (b1 << 16));
-		palette[paletteIndex * 2 + 1] = ColorConvertToDS(r2 | (g2 << 8) | (b2 << 16));
+		getColorBounds(px, 16 * nUsedTiles, &expandPal[0], &expandPal[1]);
+		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[1]);
+		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[0]);
 	} else if (palettesMode == 0x8000) {
 		//opaque, full color
-		createPaletteSlow(px, 4, 4 * nUsedTiles, expandPal, 4);
+		//int nFull = createPaletteSlow(px, 4, 4 * nUsedTiles, expandPal, 4);
+		int nFull = createPaletteSlowEx(px, 4, 4 * nUsedTiles, expandPal, 4, 20, 20, 0, 0);
+		if (nFull < 4) expandPal[0] = expandPal[1];
 		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[3]);
-		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[2]);
-		palette[paletteIndex * 2 + 2] = ColorConvertToDS(expandPal[1]);
+		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[1]);
+		palette[paletteIndex * 2 + 2] = ColorConvertToDS(expandPal[2]);
 		palette[paletteIndex * 2 + 3] = ColorConvertToDS(expandPal[0]);
 	}
 	free(px);
@@ -570,7 +554,7 @@ int buildPalette(COLOR *palette, int nPalettes, TILEDATA *tileData, int tilesX, 
 	//iterate over all non-duplicate tiles, adding the palettes.
 	//colorTable keeps track of how each color is intended to be used.
 	//00 - unused. 01 - mode 0x0000. 02 - mode 0x4000. 04 - mode 0x8000. 08 - mode 0xC000.
-	unsigned char *colorTable = (unsigned char *) calloc(nPalettes * 2, 1);
+	uint8_t *colorTable = (uint8_t *) calloc(nPalettes * 2, 1);
 	int firstSlot = 0;
 	for (int y = 0; y < tilesY; y++) {
 		for (int x = 0; x < tilesX; x++) {
@@ -594,7 +578,7 @@ int buildPalette(COLOR *palette, int nPalettes, TILEDATA *tileData, int tilesX, 
 				//yes, just add it to the list.
 				fits = 1;
 				memcpy(palette + firstSlot, tile->palette, nConsumed * sizeof(COLOR));
-				unsigned char fill = 1 << (tile->mode >> 14);
+				uint8_t fill = 1 << (tile->mode >> 14);
 				memset(colorTable + firstSlot, fill, nConsumed);
 				tile->paletteIndex = firstSlot / 2;
 				firstSlot += nConsumed;
@@ -603,13 +587,13 @@ int buildPalette(COLOR *palette, int nPalettes, TILEDATA *tileData, int tilesX, 
 				//does NOT fit, we need to rearrange some things.
 
 				while ((firstSlot + nConsumed > nPalettes * 2) || (threshold && fits)) {
-					//determine which two palettes are the most similar.
+				//determine which two palettes are the most similar.
 					int colorIndex1 = -1, colorIndex2 = -1;
 					int distance = findClosestPalettes(palette, colorTable, firstSlot, &colorIndex1, &colorIndex2);
 					if (colorIndex1 == -1) break;
 					if (fits && (distance > threshold * 10 || firstSlot < 8)) break;
 					int nColorsInPalettes = getColorsFromTable(colorTable[colorIndex1]);
-					unsigned short palettesMode = getModeFromTable(colorTable[colorIndex1]);
+					uint16_t palettesMode = getModeFromTable(colorTable[colorIndex1]);
 
 					//find tiles that use colorIndex2. Set them to use colorIndex1.
 					//then subtract from all palette indices > colorIndex2. Then we can
@@ -636,7 +620,7 @@ int buildPalette(COLOR *palette, int nPalettes, TILEDATA *tileData, int tilesX, 
 				//now add this tile's colors
 				if (!fits) {
 					memcpy(palette + firstSlot, tile->palette, nConsumed * sizeof(COLOR));
-					unsigned char fill = 1 << (tile->mode >> 14);
+					uint8_t fill = 1 << (tile->mode >> 14);
 					memset(colorTable + firstSlot, fill, nConsumed);
 					tile->paletteIndex = firstSlot / 2;
 					firstSlot += nConsumed;
@@ -649,7 +633,7 @@ int buildPalette(COLOR *palette, int nPalettes, TILEDATA *tileData, int tilesX, 
 	return firstSlot;
 }
 
-void expandPalette(COLOR *nnsPal, unsigned short mode, COLOR32 *dest, int *nOpaque) {
+void expandPalette(COLOR *nnsPal, uint16_t mode, COLOR32 *dest, int *nOpaque) {
 	dest[0] = ColorConvertFromDS(nnsPal[0]);
 	dest[1] = ColorConvertFromDS(nnsPal[1]);
 	mode &= 0xC000;
@@ -671,10 +655,10 @@ void expandPalette(COLOR *nnsPal, unsigned short mode, COLOR32 *dest, int *nOpaq
 	}
 }
 
-unsigned short findOptimalPidx(COLOR32 *px, int hasTransparent, COLOR *palette, int nColors) {
+uint16_t findOptimalPidx(COLOR32 *px, int hasTransparent, COLOR *palette, int nColors) {
 	//yes, iterate over every possible palette and mode.
-	int leastError = 0x10000000;
-	unsigned short leastPidx = 0;
+	unsigned long long leastError = 0xFFFFFFFFFFFFFFFFull;
+	uint16_t leastPidx = 0;
 	for (int i = 0; i < nColors; i += 2) {
 		COLOR *thisPalette = palette + i;
 		COLOR32 expand[4];
@@ -684,13 +668,14 @@ unsigned short findOptimalPidx(COLOR32 *px, int hasTransparent, COLOR *palette, 
 			if (j == 0 || j == 2) nConsumed = 4;
 			if (i + nConsumed > nColors) continue;
 
-			unsigned short mode = j << 14;
+			uint16_t mode = j << 14;
 			expandPalette(thisPalette, mode, expand, &nConsumed);
 			if (hasTransparent && nConsumed == 4) continue;
 
-			int dst = computeLMS(px, expand, nConsumed == 3);
+			//unsigned long long dst = computeLMS(px, expand, nConsumed == 3); //35.36s
+			unsigned long long dst = computePaletteError(px, 16, expand, 4 - (nConsumed == 3), 128, leastError); //22.26s, lot faster
 			if (dst < leastError) {
-				leastPidx = mode | (i / 2);
+				leastPidx = mode | (i >> 1);
 				leastError = dst;
 			}
 		}
@@ -722,23 +707,26 @@ int convert4x4(CREATEPARAMS *params) {
 	if (nUsedColors < 16) nUsedColors = 16;
 
 	//allocate index data.
-	unsigned short *pidx = (unsigned short *) calloc(tilesX * tilesY, 2);
+	uint16_t *pidx = (uint16_t *) calloc(tilesX * tilesY, 2);
 
 	//generate texel data.
-	unsigned int *txel = (unsigned int *) calloc(tilesX * tilesY, 4);
+	uint32_t *txel = (uint32_t *) calloc(tilesX * tilesY, 4);
 	for (int i = 0; i < tilesX * tilesY; i++) {
-		unsigned int texel = 0;
+		uint32_t texel = 0;
 
 		//double check that these settings are the most optimal for this tile.
-		unsigned short idx = findOptimalPidx((COLOR32 *) tileData[i].rgb, tileData[i].transparentPixels, nnsPal, nUsedColors);
-		unsigned short mode = idx & 0xC000;
-		unsigned short index = idx & 0x3FFF;
+		uint16_t idx = findOptimalPidx((COLOR32 *) tileData[i].rgb, tileData[i].transparentPixels, nnsPal, nUsedColors);
+		uint16_t mode = idx & 0xC000;
+		uint16_t index = idx & 0x3FFF;
 		COLOR *thisPalette = nnsPal + (index * 2);
 		pidx[i] = idx;
 
 		COLOR32 palette[4];
 		int paletteSize;
 		expandPalette(thisPalette, mode, palette, &paletteSize);
+
+		//if dither is enabled, do so here.
+		if (params->dither) ditherImagePalette((COLOR32 *) tileData[i].rgb, 4, 4, palette, paletteSize, 0, 1, 0, params->diffuseAmount);
 
 		for (int j = 0; j < 16; j++) {
 			int index = 0;

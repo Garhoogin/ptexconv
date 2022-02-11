@@ -192,6 +192,9 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 
 		//match colors
 		COLOR32 *pal = palette + (bestPalette << nBits);
+
+		//do optional dithering (also matches colors at the same time)
+		if(dither) ditherImagePalette(tile->px, 8, 8, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset, 0, 1, 0, diffuse);
 		for (int j = 0; j < 64; j++) {
 			COLOR32 col = tile->px[j];
 			int index = 0;
@@ -205,17 +208,6 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 				tile->indices[j] = index;
 			}
 			tile->px[j] = index ? (pal[index] | 0xFF000000) : 0;
-
-			//diffuse
-			if (dither && index) {
-				COLOR32 chosen = pal[index];
-
-				int er = (col & 0xFF) - (chosen & 0xFF);
-				int eg = ((col >> 8) & 0xFF) - ((chosen >> 8) & 0xFF);
-				int eb = ((col >> 16) & 0xFF) - ((chosen >> 16) & 0xFF);
-
-				doDiffuse(j, 8, 8, tile->px, er, eg, eb, 0, diffuse);
-			}
 		}
 		tile->masterTile = i;
 		tile->nRepresents = 1;

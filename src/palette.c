@@ -8,10 +8,15 @@
 int lightnessCompare(const void *d1, const void *d2) {
 	COLOR32 c1 = *(COLOR32 *) d1;
 	COLOR32 c2 = *(COLOR32 *) d2;
-	int y1, u1, v1, y2, u2, v2;
-	convertRGBToYUV(c1 & 0xFF, (c1 >> 8) & 0xFF, (c1 >> 16) & 0xFF, &y1, &u1, &v1);
-	convertRGBToYUV(c2 & 0xFF, (c2 >> 8) & 0xFF, (c2 >> 16) & 0xFF, &y2, &u2, &v2);
-	return y1 - y2;
+	if (c1 == c2) return 0;
+
+	//by properties of linear transformations, this is valid
+	int dr = (c1 & 0xFF) - (c2 & 0xFF);
+	int dg = ((c1 >> 8) & 0xFF) - ((c2 >> 8) & 0xFF);
+	int db = ((c1 >> 16) & 0xFF) - ((c2 >> 16) & 0xFF);
+	int dy = dr * 299 + dg * 587 + db * 114;
+
+	return dy;
 }
 
 void createPaletteExact(COLOR32 *img, int width, int height, COLOR32 *pal, unsigned int nColors) {
@@ -24,12 +29,22 @@ void createPalette_(COLOR32 *img, int width, int height, COLOR32 *pal, int nColo
 }
 
 
-int closestpalette(RGB rgb, RGB * palette, int paletteSize, RGB * error) {
+int closestpalette(RGB rgb, RGB *palette, int paletteSize, RGB *error) {
 	int smallestDistance = 1 << 24;
 	int index = 0, i = 0;
 	int ey, eu, ev;
+	RGB entry;
 
-	for (; i < paletteSize; i++) {
+	//test exact matches
+	for (i = 0; i < paletteSize; i++) {
+		if (((*(COLOR32 *) &rgb) & 0xFFFFFF) == (((COLOR32 *) palette)[i] & 0xFFFFFF)) {
+			index = i;
+			goto setErrorAndReturn;
+		}
+	}
+
+	//else
+	for (i = 0; i < paletteSize; i++) {
 		RGB entry = palette[i];
 		int dr = entry.r - rgb.r;
 		int dg = entry.g - rgb.g;
@@ -43,7 +58,9 @@ int closestpalette(RGB rgb, RGB * palette, int paletteSize, RGB * error) {
 			smallestDistance = dst;
 		}
 	}
-	RGB entry = palette[index];
+
+setErrorAndReturn:
+	entry = palette[index];
 	if (error) {
 		error->r = -(rgb.r - entry.r);
 		error->g = -(rgb.g - entry.g);
@@ -82,39 +99,6 @@ void doDiffuse(int i, int width, int height, unsigned int * pixels, int errorRed
 			pixels[i + width + 1] = right;
 		}
 	}
-}
-
-
-int chunkDeviation(COLOR32 *block, int width) {
-	//find the average.
-	int nPx = width * width;
-	int avgr = 0, avgg = 0, avgb = 0;
-	for (int i = 0; i < nPx; i++) {
-		COLOR32 p = block[i];
-		//if (p & 0xFF000000 == 0) continue;
-		avgr += p & 0xFF;
-		avgg += (p >> 8) & 0xFF;
-		avgb += (p >> 16) & 0xFF;
-	}
-	avgr /= nPx;
-	avgg /= nPx;
-	avgb /= nPx;
-
-	//calculate the deviation
-	unsigned int deviation = 0;
-	for (int i = 0; i < nPx; i++) {
-		COLOR32 p = block[i];
-		int r = p & 0xFF;
-		int g = (p >> 8) & 0xFF;
-		int b = (p >> 16) & 0xFF;
-		int dr = r - avgr;
-		int dg = g - avgg;
-		int db = b - avgb;
-		int c = dr * dr + dg * dg + db * db;
-		deviation += c;
-	}
-	deviation /= nPx;
-	return deviation;
 }
 
 COLOR32 averageColor(COLOR32 *cols, int nColors) {
@@ -167,6 +151,12 @@ void convertRGBToYUV(int r, int g, int b, int *y, int *u, int *v) {
 	*v = (int) ( 0.5000 * r - 0.4187 * g - 0.0813 * b);
 }
 
+void convertYUVToRGB(int y, int u, int v, int *r, int *g, int *b) {
+	*r = (int) (y - 0.00004f * u + 1.40199f * v);
+	*g = (int) (y - 0.34408f * u - 0.71389f * v);
+	*b = (int) (y + 1.77180f * u - 0.00126f * v);
+}
+
 int pixelCompare(const void *p1, const void *p2) {
 	return *(COLOR32 *) p1 - (*(COLOR32 *) p2);
 }
@@ -198,4 +188,27 @@ int countColors(COLOR32 *px, int nPx) {
 	}
 	free(copy);
 	return nColors + hasTransparent;
+}
+
+unsigned long long computePaletteError(COLOR32 *px, int nPx, COLOR32 *pal, int nColors, int alphaThreshold, unsigned long long nMaxError) {
+	if (nMaxError == 0) nMaxError = 0xFFFFFFFFFFFFFFFFull;
+	unsigned long long error = 0;
+
+	for (int i = 0; i < nPx; i++) {
+		COLOR32 p = px[i];
+		int a = (p >> 24) & 0xFF;
+		if (a < alphaThreshold) continue;
+		int best = closestpalette(*(RGB *) &(px[i]), (RGB *) pal, nColors, NULL);
+		COLOR32 chosen = pal[best];
+		int dr = (chosen & 0xFF) - (p & 0xFF);
+		int dg = ((chosen >> 8) & 0xFF) - ((p >> 8) & 0xFF);
+		int db = ((chosen >> 16) & 0xFF) - ((p >> 16) & 0xFF);
+		int dy, du, dv;
+		convertRGBToYUV(dr, dg, db, &dy, &du, &dv);
+		error += 4 * dy * dy;
+		if (error >= nMaxError) return nMaxError;
+		error += du * du + dv * dv;
+		if (error >= nMaxError) return nMaxError;
+	}
+	return error;
 }
