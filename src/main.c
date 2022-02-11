@@ -30,7 +30,7 @@
 int _fltused;
 
 const char *g_helpString = ""
-	"DS Texture Converter command line utility version 1.0.0.0\n"
+	"DS Texture Converter command line utility version 1.1.0.0\n"
 	"\n"
 	"Usage: ptexconv <option...> image [option...]\n"
 	"\n"
