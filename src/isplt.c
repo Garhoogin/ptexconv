@@ -10,6 +10,8 @@
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
 #	define __inline
+#	define TRUE 1
+#	define FALSE 0
 #endif
 
 //struct for internal processing of color leaves
@@ -32,7 +34,7 @@ void initReduction(REDUCTION *reduction, int balance, int colorBalance, int opti
 	reduction->enhanceColors = enhanceColors;
 	reduction->nPaletteColors = nColors;
 	reduction->gamma = 1.27;
-	reduction->maskColors = 1;
+	reduction->maskColors = TRUE;
 
 	for (int i = 0; i < 512; i++) {
 		reduction->lumaTable[i] = pow((double) i / 511.0, 1.27) * 511.0;
@@ -61,6 +63,7 @@ void *allocateEntry(ALLOCATOR *allocator, int size) {
 void histogramAddColor(HISTOGRAM *histogram, int y, int i, int q, int a, double weight) {
 	if (a == 0) return;
 	int slotIndex = (q + (y * 64 + i) * 4 + 0x60E + a) & 0x1FFFF;
+	if (slotIndex < histogram->firstSlot) histogram->firstSlot = slotIndex;
 
 	HIST_ENTRY *slot = histogram->entries[slotIndex];
 
@@ -198,7 +201,7 @@ void flattenHistogram(REDUCTION *reduction) {
 	reduction->histogramFlat = (HIST_ENTRY **) calloc(reduction->histogram->nEntries, sizeof(HIST_ENTRY *));
 	HIST_ENTRY **pos = reduction->histogramFlat;
 
-	for (int i = 0; i < 0x20000; i++) {
+	for (int i = reduction->histogram->firstSlot; i < 0x20000; i++) {
 		HIST_ENTRY *entry = reduction->histogram->entries[i];
 
 		while (entry != NULL) {
@@ -217,7 +220,10 @@ void computeHistogram(REDUCTION *reduction, COLOR32 *img, int width, int height)
 		}
 	}
 
-	if(reduction->histogram == NULL) reduction->histogram = (HISTOGRAM *) calloc(1, sizeof(HISTOGRAM));
+	if (reduction->histogram == NULL) {
+		reduction->histogram = (HISTOGRAM *) calloc(1, sizeof(HISTOGRAM));
+		reduction->histogram->firstSlot = 0x20000;
+	}
 
 	for (int y = 0; y < height; y++) {
 		int yiqLeft[4];
@@ -240,11 +246,11 @@ void computeHistogram(REDUCTION *reduction, COLOR32 *img, int width, int height)
 
 void freeColorTree(COLOR_NODE *colorBlock, int freeThis) {
 	if (colorBlock->left != NULL) {
-		freeColorTree(colorBlock->left, 1);
+		freeColorTree(colorBlock->left, TRUE);
 		colorBlock->left = NULL;
 	}
 	if (colorBlock->right != NULL) {
-		freeColorTree(colorBlock->right, 1);
+		freeColorTree(colorBlock->right, TRUE);
 		colorBlock->right = NULL;
 	}
 	if (freeThis) {
@@ -278,20 +284,20 @@ void createLeaves(COLOR_NODE *tree, int pivotIndex) {
 			COLOR_NODE *newNode = (COLOR_NODE *) calloc(1, sizeof(COLOR_NODE));
 
 			newNode->a = 0xFF;
-			newNode->isLeaf = 1;
+			newNode->isLeaf = TRUE;
 			newNode->startIndex = tree->startIndex;
 			newNode->endIndex = pivotIndex;
 			tree->left = newNode;
 
 			newNode = (COLOR_NODE *) calloc(1, sizeof(COLOR_NODE));
 			newNode->a = 0xFF;
-			newNode->isLeaf = 1;
+			newNode->isLeaf = TRUE;
 			newNode->startIndex = pivotIndex;
 			newNode->endIndex = tree->endIndex;
 			tree->right = newNode;
 		}
 	}
-	tree->isLeaf = 0;
+	tree->isLeaf = FALSE;
 }
 
 COLOR_NODE *getLeaf(COLOR_NODE *tree) {
@@ -463,6 +469,39 @@ double __inline lengthSquared(double x, double y, double z) {
 	return x * x + y * y + z * z;
 }
 
+void sortHistogram(REDUCTION *reduction, int startIndex, int endIndex) {
+	double principal[4];
+	int nColors = endIndex - startIndex;
+	HIST_ENTRY **thisHistogram = reduction->histogramFlat + startIndex;
+	approximatePrincipalComponent(reduction, startIndex, endIndex, principal);
+
+	//check principal component, make sure principal[0] >= 0
+	if (principal[0] < 0) {
+		principal[0] = -principal[0];
+		principal[1] = -principal[1];
+		principal[2] = -principal[2];
+		principal[3] = -principal[3];
+	}
+
+	double yWeight = principal[0] * reduction->yWeight;
+	double iWeight = principal[1] * reduction->iWeight;
+	double qWeight = principal[2] * reduction->qWeight;
+	double aWeight = principal[3] * 40.0;
+
+	for (int i = startIndex; i < endIndex; i++) {
+		HIST_ENTRY *histEntry = reduction->histogramFlat[i];
+		double value = reduction->lumaTable[histEntry->y] * yWeight
+			+ histEntry->i * iWeight
+			+ histEntry->q * qWeight
+			+ histEntry->a * aWeight;
+
+		histEntry->value = value;
+	}
+
+	//sort colors by dot product with the vector
+	qsort(thisHistogram, nColors, sizeof(HIST_ENTRY *), histEntryComparator);
+}
+
 void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 	//calculate the pivot index, as well as average YIQA values.
 	if (colorBlock->endIndex - colorBlock->startIndex < 2) {
@@ -472,7 +511,7 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 		colorBlock->q = entry->q;
 		colorBlock->a = entry->a;
 		colorBlock->weight = entry->weight;
-		colorBlock->isLeaf = 0;
+		colorBlock->isLeaf = FALSE;
 		return;
 	}
 
@@ -482,17 +521,17 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 	double principal[4];
 	approximatePrincipalComponent(reduction, colorBlock->startIndex, colorBlock->endIndex, principal);
 
-	int yWeight = reduction->yWeight;
-	int iWeight = reduction->iWeight;
-	int qWeight = reduction->qWeight;
-	int aWeight = 40;
+	double yWeight = principal[0] * reduction->yWeight;
+	double iWeight = principal[1] * reduction->iWeight;
+	double qWeight = principal[2] * reduction->qWeight;
+	double aWeight = principal[3] * 40.0;
 
 	for (int i = colorBlock->startIndex; i < colorBlock->endIndex; i++) {
 		HIST_ENTRY *histEntry = reduction->histogramFlat[i];
-		double value = histEntry->i * iWeight * principal[1]
-			+ histEntry->q * qWeight * principal[2]
-			+ histEntry->a * aWeight * principal[3]
-			+ reduction->lumaTable[histEntry->y] * yWeight * principal[0];
+		double value = reduction->lumaTable[histEntry->y] * yWeight
+			+ histEntry->i * iWeight
+			+ histEntry->q * qWeight
+			+ histEntry->a * aWeight;
 
 		histEntry->value = value;
 		if (value >= greatestValue) {
@@ -505,7 +544,7 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 
 	double valueRange = greatestValue - leastValue;
 	if (valueRange < 0.0) {
-		colorBlock->isLeaf = 0;
+		colorBlock->isLeaf = FALSE;
 		return;
 	}
 
@@ -601,14 +640,86 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 	free(colorInfo);
 }
 
+double addPriorities(COLOR_NODE *n1, COLOR_NODE *n2, REDUCTION *reduction) {
+	double p1 = n1->priority, p2 = n2->priority;
+	double adjustedWeight = 1.0;
+	if (!reduction->enhanceColors) {
+		p1 *= sqrt(n1->weight);
+		p2 *= sqrt(n2->weight);
+		adjustedWeight = sqrt(n1->weight + n2->weight);
+	}
+	return (p1 + p2) / adjustedWeight;
+}
+
 COLOR32 maskColor(COLOR32 color) {
 	return ColorConvertFromDS(ColorConvertToDS(color & 0xFFFFFF));
+}
+
+COLOR_NODE *findNodeByColor(COLOR_NODE *treeHead, COLOR_NODE *src, int maskColors) {
+	if (treeHead == NULL || treeHead == src) return NULL;
+
+	if (treeHead->left != NULL || treeHead->right != NULL) {
+		COLOR_NODE *foundLeft = findNodeByColor(treeHead->left, src, maskColors);
+		if (foundLeft != NULL) return foundLeft;
+
+		COLOR_NODE *foundRight = findNodeByColor(treeHead->right, src, maskColors);
+		return foundRight;
+	}
+
+	//is leaf, does this match?
+	int rgb[4];
+	int yiq[] = { src->y, src->i, src->q, 0 };
+	yiqToRgb(rgb, yiq);
+	COLOR32 compare = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
+	if(maskColors) compare = maskColor(compare);
+
+	yiq[0] = treeHead->y;
+	yiq[1] = treeHead->i;
+	yiq[2] = treeHead->q;
+	yiqToRgb(rgb, yiq);
+	COLOR32 thisRgb = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
+	if(maskColors) thisRgb = maskColor(thisRgb);
+
+	return (compare == thisRgb) ? treeHead : NULL;
+}
+
+COLOR_NODE *findNodeByChild(COLOR_NODE *treeHead, COLOR_NODE *child) {
+	if (treeHead == NULL) return NULL;
+	if (treeHead->left == child || treeHead->right == child) return treeHead;
+
+	COLOR_NODE *foundLeft = findNodeByChild(treeHead->left, child);
+	if (foundLeft != NULL) return foundLeft;
+
+	return findNodeByChild(treeHead->right, child);
+}
+
+COLOR_NODE *findNodeByIndex(COLOR_NODE *treeHead, int index) {
+	if (treeHead == NULL) return NULL;
+	if (treeHead->left == NULL && treeHead->right == NULL) return treeHead;
+	if (treeHead->left == NULL) return findNodeByIndex(treeHead->right, index);
+	if (treeHead->right == NULL) return findNodeByIndex(treeHead->left, index);
+
+	//count nodes left. If greater than index, search left, else search right
+	int nodesLeft = getNumberOfTreeLeaves(treeHead->left);
+	if (nodesLeft > index) return findNodeByIndex(treeHead->left, index);
+	return findNodeByIndex(treeHead->right, index - nodesLeft);
+}
+
+void cleanEmptyNode(COLOR_NODE *treeHead, COLOR_NODE *node) {
+	//trace up the tree clearing out empty non-leaf nodes
+	COLOR_NODE *parent = findNodeByChild(treeHead, node);
+	if (parent != NULL) {
+		if (parent->left == node) parent->left = NULL;
+		if (parent->right == node) parent->right = NULL;
+		if (parent->left == NULL && parent->right == NULL) cleanEmptyNode(treeHead, parent);
+	}
+	freeColorTree(node, TRUE);
 }
 
 void optimizePalette(REDUCTION *reduction) {
 	//do it
 	COLOR_NODE *treeHead = (COLOR_NODE *) calloc(1, sizeof(COLOR_NODE));
-	treeHead->isLeaf = 1;
+	treeHead->isLeaf = TRUE;
 	treeHead->a = 0xFF;
 	treeHead->endIndex = reduction->histogram->nEntries;
 
@@ -644,11 +755,11 @@ void optimizePalette(REDUCTION *reduction) {
 				//destroy this node?
 				if (leftBlock->weight < 1.0) {
 					if (leftBlock->left != NULL) {
-						freeColorTree(leftBlock->left, 1);
+						freeColorTree(leftBlock->left, TRUE);
 						leftBlock->left = NULL;
 					}
 					if (leftBlock->right != NULL) {
-						freeColorTree(leftBlock->right, 1);
+						freeColorTree(leftBlock->right, TRUE);
 						leftBlock->right = NULL;
 					}
 					colorBlock->left = NULL;
@@ -661,11 +772,11 @@ void optimizePalette(REDUCTION *reduction) {
 				//destroy this node?
 				if (rightBlock->weight < 1.0) {
 					if (rightBlock->left != NULL) {
-						freeColorTree(rightBlock->left, 1);
+						freeColorTree(rightBlock->left, TRUE);
 						rightBlock->left = NULL;
 					}
 					if (rightBlock->right != NULL) {
-						freeColorTree(rightBlock->right, 1);
+						freeColorTree(rightBlock->right, TRUE);
 						rightBlock->right = NULL;
 					}
 					colorBlock->right = NULL;
@@ -681,20 +792,22 @@ void optimizePalette(REDUCTION *reduction) {
 				int rightAlpha = colorBlock->right->a;
 				COLOR32 leftRgb = decodedLeft[0] | (decodedLeft[1] << 8) | (decodedLeft[2] << 16);
 				COLOR32 rightRgb = decodedRight[0] | (decodedRight[1] << 8) | (decodedRight[2] << 16);
-				COLOR32 maskedLeft = maskColor(leftRgb), maskedRight = maskColor(rightRgb);
-				if (!reduction->maskColors) maskedLeft = leftRgb, maskedRight = rightRgb;
+				if (reduction->maskColors && numberOfTreeElements > 2) { //don't prune too quickly
+					leftRgb = maskColor(leftRgb);
+					rightRgb = maskColor(rightRgb);
+				}
 
-				if (maskedLeft == maskedRight && leftAlpha == rightAlpha) {
+				if (leftRgb == rightRgb && leftAlpha == rightAlpha) {
 					leftBlock = colorBlock->left, rightBlock = colorBlock->right;
 
 					//prune left
 					if (leftBlock != NULL) {
 						if (leftBlock->left != NULL) {
-							freeColorTree(leftBlock->left, 1);
+							freeColorTree(leftBlock->left, TRUE);
 							leftBlock->left = NULL;
 						}
 						if (leftBlock->right != NULL) {
-							freeColorTree(leftBlock->right, 1);
+							freeColorTree(leftBlock->right, TRUE);
 							leftBlock->right = NULL;
 						}
 						free(leftBlock);
@@ -705,11 +818,11 @@ void optimizePalette(REDUCTION *reduction) {
 					//prune right
 					if (rightBlock != NULL) {
 						if (rightBlock->left != NULL) {
-							freeColorTree(rightBlock->left, 1);
+							freeColorTree(rightBlock->left, TRUE);
 							rightBlock->left = NULL;
 						}
 						if (rightBlock->right != NULL) {
-							freeColorTree(rightBlock->right, 1);
+							freeColorTree(rightBlock->right, TRUE);
 							rightBlock->right = NULL;
 						}
 						free(rightBlock);
@@ -718,7 +831,6 @@ void optimizePalette(REDUCTION *reduction) {
 					colorBlock->right = NULL;
 				}
 			}
-
 
 			//count number of leaves
 			numberOfTreeElements = 0;
@@ -733,9 +845,42 @@ void optimizePalette(REDUCTION *reduction) {
 				}
 			}
 
-			if (numberOfTreeElements >= reduction->nPaletteColors) break;
+			if (numberOfTreeElements >= reduction->nPaletteColors) {
+
+				//duplicate color test
+				int prunedNode = 0;
+				for (int i = 0; i < numberOfTreeElements; i++) {
+					COLOR_NODE *node = findNodeByIndex(treeHead, i);
+					COLOR_NODE *dup = findNodeByColor(treeHead, node, reduction->maskColors);
+					if (dup != NULL) {
+						double p1 = node->priority, p2 = dup->priority;
+						double total = addPriorities(node, dup, reduction);
+						COLOR_NODE *toDelete = dup, *toKeep = node, *parent = NULL;
+
+						//find which node should keep, which to remove using priority
+						if (p1 < p2) {
+							toDelete = node;
+							toKeep = dup;
+						}
+						parent = findNodeByChild(treeHead, toDelete);
+						toKeep->priority = total;
+
+						//remove node from existence
+						freeColorTree(toDelete, TRUE);
+						if (parent->left == toDelete) parent->left = NULL;
+						if (parent->right == toDelete) parent->right = NULL;
+						if (parent->right == NULL && parent->left == NULL) cleanEmptyNode(treeHead, parent);
+						numberOfTreeElements--;
+						prunedNode = 1;
+						break;
+					}
+				}
+
+				if(!prunedNode) break;
+			}
 		}
 	}
+
 	reduction->nUsedColors = numberOfTreeElements;
 }
 
@@ -771,9 +916,12 @@ void paletteToArray(REDUCTION *reduction) {
 			int rgb[4];
 			yiqToRgb(rgb, yiq);
 
-			reduction->paletteRgb[ofs][0] = rgb[0];
-			reduction->paletteRgb[ofs][1] = rgb[1];
-			reduction->paletteRgb[ofs][2] = rgb[2];
+			COLOR32 rgb32 = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
+			//if (reduction->maskColors) rgb32 = maskColor(rgb32);
+
+			reduction->paletteRgb[ofs][0] = rgb32 & 0xFF;
+			reduction->paletteRgb[ofs][1] = (rgb32 >> 8) & 0xFF;
+			reduction->paletteRgb[ofs][2] = (rgb32 >> 16) & 0xFF;
 			ofs++;
 		}
 	}
@@ -794,7 +942,7 @@ void destroyReduction(REDUCTION *reduction) {
 		freeAllocations(&reduction->histogram->allocator);
 		free(reduction->histogram);
 	}
-	if(reduction->colorTreeHead != NULL) freeColorTree(reduction->colorTreeHead, 0);
+	if(reduction->colorTreeHead != NULL) freeColorTree(reduction->colorTreeHead, FALSE);
 	free(reduction->colorTreeHead);
 }
 
@@ -806,7 +954,7 @@ void resetHistogram(REDUCTION *reduction) {
 		free(reduction->histogram);
 		reduction->histogram = NULL;
 	}
-	if (reduction->colorTreeHead != NULL) freeColorTree(reduction->colorTreeHead, 0);
+	if (reduction->colorTreeHead != NULL) freeColorTree(reduction->colorTreeHead, FALSE);
 	free(reduction->colorTreeHead);
 	reduction->colorTreeHead = NULL;
 	reduction->nUsedColors = 0;
@@ -817,7 +965,7 @@ extern int lightnessCompare(const void *d1, const void *d2);
 
 int createPaletteSlow(COLOR32 *img, int width, int height, COLOR32 *pal, unsigned int nColors) {
 	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
-	initReduction(reduction, 20, 20, 15, 0, nColors);
+	initReduction(reduction, 20, 20, 15, FALSE, nColors);
 	computeHistogram(reduction, img, width, height);
 	flattenHistogram(reduction);
 	optimizePalette(reduction);
@@ -854,17 +1002,15 @@ void copyTile(TILE *dest, COLOR32 *pxOrigin, int width) {
 
 int findClosestPaletteColorRGB(int *palette, int nColors, COLOR32 col, int *outDiff) {
 	int rgb[4];
-	int y, u, v;
-	convertRGBToYUV(col & 0xFF, (col >> 8) & 0xFF, (col >> 16) & 0xFF, &y, &u, &v);
+	int r = col & 0xFF, g = (col >> 8) & 0xFF, b = (col >> 16) & 0xFF;
 
 	int leastDiff = 0x7FFFFFFF;
 	int leastIndex = 0;
 	for (int i = 0; i < nColors; i++) {
-		int y2, u2, v2;
+		int dy, du, dv;
 		yiqToRgb(rgb, palette + i * 4);
-		convertRGBToYUV(rgb[0], rgb[1], rgb[2], &y2, &u2, &v2);
+		convertRGBToYUV(rgb[0] - r, rgb[1] - g, rgb[2] - b, &dy, &du, &dv);
 
-		int dy = y2 - y, du = u2 - u, dv = v2 - v;
 		int diff = dy * dy * 2 + du * du + dv * dv;
 		if (diff < leastDiff) {
 			leastDiff = diff;
@@ -875,7 +1021,7 @@ int findClosestPaletteColorRGB(int *palette, int nColors, COLOR32 col, int *outD
 	return leastIndex;
 }
 
-int findClosestPaletteColor(int *palette, int nColors, int *col, int *outDiff) {
+int findClosestPaletteColor(REDUCTION *reduction, int *palette, int nColors, int *col, int *outDiff) {
 	int rgb[4];
 	yiqToRgb(rgb, col);
 	return findClosestPaletteColorRGB(palette, nColors, rgb[0] | (rgb[1] << 8) | (rgb[2] << 16), outDiff);
@@ -890,7 +1036,7 @@ int computeTilePaletteDifference(REDUCTION *reduction, TILE *tile1, TILE *tile2)
 	for (int i = 0; i < tile2->nUsedColors; i++) {
 		int *yiq = &tile2->palette[i][0];
 		int diff = 0;
-		int closest = findClosestPaletteColor(&tile1->palette[0][0], tile1->nUsedColors, yiq, &diff);
+		int closest = findClosestPaletteColor(reduction, &tile1->palette[0][0], tile1->nUsedColors, yiq, &diff);
 
 		if (diff > 0) {
 			totalDiff += sqrt(diff) * tile2->useCounts[i];
@@ -946,13 +1092,21 @@ done:
 }
 
 void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
-							  int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
+							int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
+	createMultiplePalettesEx(imgBits, tilesX, tilesY, dest, paletteBase, nPalettes, paletteSize, nColsPerPalette,
+							 paletteOffset, BALANCE_DEFAULT, BALANCE_DEFAULT, 0, progress);
+}
+
+void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
+							  int paletteSize, int nColsPerPalette, int paletteOffset, int balance,
+							  int colorBalance, int enhanceColors, int *progress) {
 	if (nPalettes == 0) return;
 	if (nPalettes == 1) {
 		if (paletteOffset) {
-			createPaletteExact(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset, paletteSize);
+			createPaletteSlowEx(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset, paletteSize, balance, colorBalance, enhanceColors, 0);
 		} else {
-			createPalette_(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize), paletteSize);
+			createPaletteSlowEx(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset + 1, paletteSize - 1, balance, colorBalance, enhanceColors, 0);
+			dest[(paletteBase * paletteSize) + paletteOffset] = 0xFF00FF; //transparent fill
 		}
 		return;
 	}
@@ -968,8 +1122,8 @@ void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *d
 	int nTiles = tilesX * tilesY;
 	TILE *tiles = (TILE *) calloc(nTiles, sizeof(TILE));
 	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
-	initReduction(reduction, 20, 20, 15, 0, nColsPerPalette);
-	reduction->maskColors = 0;
+	initReduction(reduction, balance, colorBalance, 15, enhanceColors, nColsPerPalette);
+	reduction->maskColors = FALSE;
 	COLOR32 palBuf[16];
 	for (int y = 0; y < tilesY; y++) {
 		for (int x = 0; x < tilesX; x++) {
@@ -1193,8 +1347,12 @@ int closestPaletteYiq(REDUCTION *reduction, int *yiqColor, int *palette, int nCo
 }
 
 void ditherImagePalette(COLOR32 *img, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse) {
+	ditherImagePaletteEx(img, width, height, palette, nColors, touchAlpha, binaryAlpha, c0xp, diffuse, BALANCE_DEFAULT, BALANCE_DEFAULT, FALSE);
+}
+
+void ditherImagePaletteEx(COLOR32 *img, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse, int balance, int colorBalance, int enhanceColors) {
 	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
-	initReduction(reduction, 20, 20, 15, 0, nColors);
+	initReduction(reduction, balance, colorBalance, 15, enhanceColors, nColors);
 
 	//convert palette to YIQ
 	int *yiqPalette = (int *) calloc(nColors, 4 * sizeof(int));
@@ -1281,7 +1439,7 @@ void ditherImagePalette(COLOR32 *img, int width, int height, COLOR32 *palette, i
 
 			//now test: Should we dither?
 			double balanceSquare = reduction->yWeight * reduction->yWeight;
-			if (centerDistance < 110.0 * balanceSquare && paletteDistance >  2.0 * balanceSquare) {
+			if (centerDistance < 110.0 * balanceSquare && paletteDistance >  2.0 * balanceSquare && diffuse > 0.0f) {
 				//Yes, we should dither :)
 
 				int diffuseY = (int) (thisDiffuse[(x + 1) * 4 + 0] * diffuse / 16); //correct for Floyd-Steinberg coefficients
@@ -1386,3 +1544,46 @@ void ditherImagePalette(COLOR32 *img, int width, int height, COLOR32 *palette, i
 	destroyReduction(reduction);
 	free(reduction);
 }
+
+double computePaletteErrorYiq(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *pal, int nColors, int alphaThreshold, double nMaxError) {
+	if (nMaxError == 0) nMaxError = 1e32;
+	double error = 0;
+
+	int paletteYiqStack[16 * 4]; //small palettes
+	int *paletteYiq = paletteYiqStack;
+	if (nColors > 16) {
+		paletteYiq = (int *) calloc(nColors, 4 * sizeof(int));
+	}
+
+	//palette to YIQ
+	for (int i = 0; i < nColors; i++) {
+		rgbToYiq(pal[i], paletteYiq + i * 4);
+	}
+
+	double yw2 = reduction->yWeight * reduction->yWeight;
+	double iw2 = reduction->iWeight * reduction->iWeight;
+	double qw2 = reduction->qWeight * reduction->qWeight;
+	for (int i = 0; i < nPx; i++) {
+		COLOR32 p = px[i];
+		int a = (p >> 24) & 0xFF;
+		if (a < alphaThreshold) continue;
+
+		int yiq[4];
+		rgbToYiq(px[i], yiq);
+		int best = closestPaletteYiq(reduction, yiq, paletteYiq, nColors);
+		int *chosen = paletteYiq + best * 4;
+
+		double dy = reduction->lumaTable[yiq[0]] - reduction->lumaTable[chosen[0]];
+		double di = yiq[1] - chosen[1];
+		double dq = yiq[2] - chosen[2];
+
+		error += dy * dy * yw2;
+		if (error >= nMaxError) return nMaxError;
+		error += di * di * iw2 + dq * dq * qw2;
+		if (error >= nMaxError) return nMaxError;
+	}
+
+	if (paletteYiq != paletteYiqStack) free(paletteYiq);
+	return error;
+}
+

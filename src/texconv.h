@@ -36,4 +36,4 @@ extern volatile int _globFinished;
 int convert4x4(CREATEPARAMS *params);
 
 //to convert a texture directly.
-int startConvert(CREATEPARAMS *lpParam);
+int textureConvert(CREATEPARAMS *lpParam);

@@ -36,7 +36,7 @@ typedef struct {
 
 char *stringFromFormat(int fmt);
 
-void convertTexture(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip);
+void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip);
 
 int getTexelSize(int width, int height, int texImageParam);
 

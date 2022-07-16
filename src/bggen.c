@@ -182,7 +182,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 		int bestError = 0x7FFFFFFF;
 		for (int j = paletteBase; j < paletteBase + nPalettes; j++) {
 			COLOR32 *pal = palette + (j << nBits);
-			int err = getPaletteError((RGB *) tile->px, 64, (RGB *) pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset);
+			int err = getPaletteError(tile->px, 64, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset);
 
 			if (err < bestError) {
 				bestError = err;
@@ -199,7 +199,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 			COLOR32 col = tile->px[j];
 			int index = 0;
 			if (((col >> 24) & 0xFF) > 127) {
-				index = closestpalette(*(RGB *) &col, (RGB *) pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset, NULL)
+				index = closestPalette(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset)
 					+ !paletteOffset + paletteOffset;
 			}
 			if (nBits == 4) {
@@ -336,7 +336,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 			int bestError = 0x7FFFFFFF;
 			for (int j = paletteBase; j < paletteBase + nPalettes; j++) {
 				COLOR32 *pal = palette + (j << nBits);
-				int err = getPaletteError((RGB *) tile->px, 64, (RGB *) pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset);
+				int err = getPaletteError(tile->px, 64, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset);
 
 				if (err < bestError) {
 					bestError = err;
@@ -350,7 +350,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 				COLOR32 col = tile->px[j];
 				int index = 0;
 				if (((col >> 24) & 0xFF) > 127) {
-					index = closestpalette(*(RGB *) &col, (RGB *) pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset, NULL)
+					index = closestPalette(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset)
 						+ !paletteOffset + paletteOffset;
 				}
 				if (nBits == 4) {

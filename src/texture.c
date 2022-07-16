@@ -41,7 +41,7 @@ char *stringFromFormat(int fmt) {
 	return fmts[fmt];
 }
 
-void convertTexture(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
+void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 	int format = FORMAT(texels->texImageParam);
 	int c0xp = COL0TRANS(texels->texImageParam);
 	int width = TEXW(texels->texImageParam);
