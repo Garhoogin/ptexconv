@@ -17,23 +17,12 @@ typedef struct {
 	uint8_t a;
 } RGB;
 
-void getrgb(COLOR n, RGB * ret){
-	COLOR32 c = ColorConvertFromDS(n);
-
-	ret->r = (uint8_t) ((c & 0xFF) * 255 / 31);
-	ret->g = (uint8_t) (((c >> 8) & 0xFF) * 255 / 31);
-	ret->b = (uint8_t) (((c >> 16) & 0xFF) * 255 / 31);
+void getrgb(unsigned short n, RGB * ret){
+	COLOR32 conv = ColorConvertFromDS(n);
+	ret->r = conv & 0xFF;
+	ret->g = (conv >> 8) & 0xFF;
+	ret->b = (conv >> 16) & 0xFF;
 	ret->a = (uint8_t) (255 * (n >> 15));
-}
-
-int max16Len(char *str) {
-	int len = 0;
-	for (int i = 0; i < 16; i++) {
-		char c = str[i];
-		if (!c) return len;
-		len++;
-	}
-	return len;
 }
 
 char *stringFromFormat(int fmt) {
@@ -163,7 +152,7 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 				int mode = (data >> 14) & 0x3;
 				if (address < palette->nColors) {
 					unsigned short * base = ((unsigned short *) palette->pal) + address;
-					getrgb(base[0], colors);
+					getrgb(base[0], colors + 0);
 					getrgb(base[1], colors + 1);
 					colors[0].a = 255;
 					colors[1].a = 255;

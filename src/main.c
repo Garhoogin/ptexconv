@@ -29,8 +29,10 @@
 
 int _fltused;
 
+#define VERSION "1.2.0.0"
+
 const char *g_helpString = ""
-	"DS Texture Converter command line utility version 1.1.0.0\n"
+	"DS Texture Converter command line utility version" VERSION "\n"
 	"\n"
 	"Usage: ptexconv <option...> image [option...]\n"
 	"\n"
@@ -57,6 +59,7 @@ const char *g_helpString = ""
 	"\n"
 	"Texture Options:\n"
 	"   -f     Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
+	"   -ot    Output as NNS TGA\n"
 	"   -fp    Specify fixed palette file\n\n"
 "";
 
@@ -184,6 +187,99 @@ int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
 	return fmt;
 }
 
+char *getVersion() {
+	return VERSION;
+}
+
+int max16Len(char *str) {
+	int len = 0;
+	for (int i = 0; i < 16; i++) {
+		char c = str[i];
+		if (!c) return len;
+		len++;
+	}
+	return len;
+}
+
+//lifted almost straight from NitroPaint
+void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
+	FILE *fp = _tfopen(name, _T("wb"));
+
+	int width = TEXW(texels->texImageParam);
+	int height = TEXH(texels->texImageParam);
+	COLOR32 *pixels = (COLOR32 *) calloc(width * height, sizeof(COLOR32));
+	textureRender(pixels, texels, palette, 1);
+
+	unsigned char header[] = {0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,
+		'N', 'N', 'S', '_', 'T', 'g', 'a', ' ', 'V', 'e', 'r', ' ', '1', '.', '0', 0, 0, 0, 0, 0};
+	*(uint16_t *) (header + 0xC) = width;
+	*(uint16_t *) (header + 0xE) = height;
+	*(uint32_t *) (header + 0x22) = sizeof(header) + width * height * 4;
+	fwrite(header, sizeof(header), 1, fp);
+	fwrite(pixels, width * height * 4, 1, fp);
+
+	char *fstr = stringFromFormat(FORMAT(texels->texImageParam));
+	fwrite("nns_frmt", 8, 1, fp);
+	uint32_t flen = strlen(fstr) + 0xC;
+	fwrite(&flen, 4, 1, fp);
+	fwrite(fstr, 1, flen - 0xC, fp);
+
+	//texels
+	fwrite("nns_txel", 8, 1, fp);
+	uint32_t txelLength = getTexelSize(width, height, texels->texImageParam) + 0xC;
+	fwrite(&txelLength, 4, 1, fp);
+	fwrite(texels->texel, txelLength - 0xC, 1, fp);
+
+	//write 4x4 if applicable
+	if (FORMAT(texels->texImageParam) == CT_4x4) {
+		fwrite("nns_pidx", 8, 1, fp);
+		uint32_t pidxLength = (txelLength - 0xC) / 2 + 0xC;
+		fwrite(&pidxLength, 4, 1, fp);
+		fwrite(texels->cmp, pidxLength - 0xC, 1, fp);
+	}
+
+	//palette (if applicable)
+	if (FORMAT(texels->texImageParam) != CT_DIRECT) {
+		fwrite("nns_pnam", 8, 1, fp);
+		uint32_t pnamLength = max16Len(palette->name) + 0xC;
+		fwrite(&pnamLength, 4, 1, fp);
+		fwrite(palette->name, 1, pnamLength - 0xC, fp);
+
+		int nColors = palette->nColors;
+		if (FORMAT(texels->texImageParam) == CT_4COLOR && nColors > 4) nColors = 4;
+		fwrite("nns_pcol", 8, 1, fp);
+		uint32_t pcolLength = nColors * 2 + 0xC;
+		fwrite(&pcolLength, 4, 1, fp);
+		fwrite(palette->pal, nColors, 2, fp);
+	}
+
+	unsigned char gnam[] = {'n', 'n', 's', '_', 'g', 'n', 'a', 'm', 20, 0, 0, 0, 'p', 't', 'e', 'x', 'c', 'o', 'n', 'v'};
+	fwrite(gnam, sizeof(gnam), 1, fp);
+
+	char version[16];
+	getVersion(version, 16);
+	unsigned char gver[] = {'n', 'n', 's', '_', 'g', 'v', 'e', 'r', 0, 0, 0, 0};
+	*(uint32_t *) (gver + 8) = strlen(version) + 0xC;
+	fwrite(gver, sizeof(gver), 1, fp);
+	fwrite(version, strlen(version), 1, fp);
+
+	unsigned char imst[] = {'n', 'n', 's', '_', 'i', 'm', 's', 't', 0xC, 0, 0, 0};
+	fwrite(imst, sizeof(imst), 1, fp);
+
+	//if c0xp
+	if (COL0TRANS(texels->texImageParam)) {
+		unsigned char c0xp[] = {'n', 'n', 's', '_', 'c', '0', 'x', 'p', 0xC, 0, 0, 0};
+		fwrite(c0xp, sizeof(c0xp), 1, fp);
+	}
+
+	//write end
+	unsigned char end[] = {'n', 'n', 's', '_', 'e', 'n', 'd', 'b', 0xC, 0, 0, 0};
+	fwrite(end, sizeof(end), 1, fp);
+
+	fclose(fp);
+	free(pixels);
+}
+
 #ifdef _WIN32
 
 float mylog2(float d) { //UGLY!
@@ -241,6 +337,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int silent = 0;
 	int diffuse = 0;
 	int outputBinary = 1;
+	int outputTga = 0;
 	int mode = MODE_BG;
 
 	//BG settings
@@ -323,6 +420,8 @@ int _tmain(int argc, TCHAR **argv) {
 					else _tprintf(_T("Unknown texture format %s.\n"), fmtString);
 				}
 			}
+		} else if (_tcscmp(arg, _T("-ot")) == 0) {
+			outputTga = 1;
 		} else if (arg[0] != _T('-')) { //not a switch
 			srcImage = arg;
 		}
@@ -352,6 +451,10 @@ int _tmain(int argc, TCHAR **argv) {
 	}
 	if (mode == MODE_BG && ((depth == 4 && nMaxColors > 16) || (depth == 8 && nMaxColors > 256))) {
 		printf("Too many output colors specified: %d\n", nMaxColors);
+		return 1;
+	}
+	if (mode == MODE_BG && outputTga) {
+		printf("Cannot output NNS TGA for BGs.\n");
 		return 1;
 	}
 
@@ -493,6 +596,9 @@ int _tmain(int argc, TCHAR **argv) {
 		//Generate Texture
 		//fix up automatic flags
 
+		if (outputTga) {
+			outputBinary = 0;
+		}
 		if (format == -1) {
 			format = guessFormat(px, width, height);
 		}
@@ -600,6 +706,14 @@ int _tmain(int argc, TCHAR **argv) {
 				if(!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
 			}
 
+			free(nameBuffer);
+		} else if (outputTga) {
+			//output as NNS TGA file
+			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 5, sizeof(TCHAR));
+			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
+			memcpy(nameBuffer + baseLength, _T(".tga"), 5 * sizeof(TCHAR));
+
+			writeNitroTGA(nameBuffer, &texture.texels, &texture.palette);
 			free(nameBuffer);
 		} else {
 
