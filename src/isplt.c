@@ -10,9 +10,10 @@
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
 #	define __inline
-#	define TRUE 1
-#	define FALSE 0
 #endif
+
+#define TRUE 1
+#define FALSE 0
 
 //struct for internal processing of color leaves
 typedef struct {
@@ -1586,4 +1587,3 @@ double computePaletteErrorYiq(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR3
 	if (paletteYiq != paletteYiqStack) free(paletteYiq);
 	return error;
 }
-

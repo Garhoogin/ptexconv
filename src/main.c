@@ -32,60 +32,61 @@ int _fltused;
 #define VERSION "1.2.0.0"
 
 const char *g_helpString = ""
-	"DS Texture Converter command line utility version " VERSION "\n"
-	"\n"
-	"Usage: ptexconv <option...> image [option...]\n"
-	"\n"
-	"Global options:\n"
-	"   -gb     Generate BG (default)\n"
-	"   -gt     Generate texture\n"
-	"   -o      Specify output base name\n"
-	"   -ob     Output binary (default)\n"
-	"   -oc     Output as C header file\n"
-	"   -d  <n> Use dithering of n% (default 0%)\n"
-	"   -cm <n> Limit palette colors to n, regardless of bit depth\n"
-	"   -s      Silent\n"
-	"   -h      Display help text\n"
-	"\n"
-	"BG Options:\n"
-	"   -b  <n> Specify output bit depth {4, 8}\n"
-	"   -p  <n> Use n palettes in output (Only valid for 4bpp)\n"
-	"   -pb <n> Use palette base index n (Only valid for 4bpp)\n"
-	"   -cc <n> Compress characters to a maximum of n (default is 1024)\n"
-	"   -cn     No character compression\n"
-	"   -ns     Do not output screen data\n"
-	"   -nx     No tile flip X\n"
-	"   -ny     No tile flip Y\n"
-	"\n"
-	"Texture Options:\n"
-	"   -f     Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
-	"   -ot    Output as NNS TGA\n"
-	"   -fp    Specify fixed palette file\n\n"
+"DS Texture Converter command line utility version " VERSION "\n"
+"\n"
+"Usage: ptexconv <option...> image [option...]\n"
+"\n"
+"Global options:\n"
+"   -gb     Generate BG (default)\n"
+"   -gt     Generate texture\n"
+"   -o      Specify output base name\n"
+"   -ob     Output binary (default)\n"
+"   -oc     Output as C header file\n"
+"   -d  <n> Use dithering of n% (default 0%)\n"
+"   -cm <n> Limit palette colors to n, regardless of bit depth\n"
+"   -s      Silent\n"
+"   -h      Display help text\n"
+"\n"
+"BG Options:\n"
+"   -b  <n> Specify output bit depth {4, 8}\n"
+"   -p  <n> Use n palettes in output (Only valid for 4bpp)\n"
+"   -pb <n> Use palette base index n (Only valid for 4bpp)\n"
+"   -cc <n> Compress characters to a maximum of n (default is 1024)\n"
+"   -cn     No character compression\n"
+"   -ns     Do not output screen data\n"
+"   -od     Output as DIB (disables character compression)\n"
+"   -nx     No tile flip X\n"
+"   -ny     No tile flip Y\n"
+"\n"
+"Texture Options:\n"
+"   -f     Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
+"   -ot    Output as NNS TGA\n"
+"   -fp    Specify fixed palette file\n\n"
 "";
 
 const char *texHeader = ""
-	"///////////////////////////////////////\n"
-	"// \n"
-	"// %s\n"
-	"// Generated %d/%d/%d %d:%02d %cM\n"
-	"// Format: %s\n"
-	"// Colors: %d\n"
-	"// Size: %dx%d\n"
-	"// \n"
-	"///////////////////////////////////////\n\n"
+"///////////////////////////////////////\n"
+"// \n"
+"// %s\n"
+"// Generated %d/%d/%d %d:%02d %cM\n"
+"// Format: %s\n"
+"// Colors: %d\n"
+"// Size: %dx%d\n"
+"// \n"
+"///////////////////////////////////////\n\n"
 "";
 
 const char *bgHeader = ""
-	"///////////////////////////////////////\n"
-	"// \n"
-	"// %s\n"
-	"// Generated %d/%d/%d %d:%02d %cM\n"
-	"// Bit depth: %d\n"
-	"// Palettes: %d\n"
-	"// Palette base: %d\n"
-	"// Size: %dx%d\n"
-	"// \n"
-	"///////////////////////////////////////\n\n"
+"///////////////////////////////////////\n"
+"// \n"
+"// %s\n"
+"// Generated %d/%d/%d %d:%02d %cM\n"
+"// Bit depth: %d\n"
+"// Palettes: %d\n"
+"// Palette base: %d\n"
+"// Size: %dx%d\n"
+"// \n"
+"///////////////////////////////////////\n\n"
 "";
 
 void getDate(int *month, int *day, int *year, int *hour, int *minute, int *am) {
@@ -280,6 +281,112 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	free(pixels);
 }
 
+unsigned char *createBitmapData(int *indices, int width, int height, int depth, int *dataSize) {
+	int strideLength = (width * depth + 7) / 8;
+	if (strideLength & 3) strideLength = (strideLength + 3) & ~3;
+
+	int imageSize = strideLength * height;
+	*dataSize = imageSize;
+
+	int posShift = (depth == 4) ? 1 : 0;
+	int idxShift = (depth == 4) ? 4 : 0;
+
+	unsigned char *data = (unsigned char *) calloc(imageSize, 1);
+	for (int y = 0; y < height; y++) {
+		unsigned char *row = data + y * strideLength;
+
+		for (int x = 0; x < width; x++) {
+			unsigned char old = row[x >> posShift];
+			int index = x + (height - 1 - y) * width;
+			if (depth == 8) {
+				row[x] = indices[index];
+			} else {
+				int idx = indices[index];
+				if (x & 1) {
+					row[x >> posShift] = old | idx;
+				} else {
+					row[x >> posShift] = idx << 4;
+				}
+			}
+		}
+	}
+
+	return data;
+}
+
+void writeBitmap(COLOR32 *palette, int paletteSize, int *indices, int width, int height, const TCHAR *path) {
+	FILE *fp = _tfopen(path, _T("wb"));
+
+	unsigned char header[] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	unsigned char infoHeader[] = {
+		0x28, 0, 0, 0,
+		0, 0, 0, 0, //width
+		0, 0, 0, 0, //height
+		1, 0, //planes
+		0, 0, //depth
+		0, 0, 0, 0, //compression
+		0, 0, 0, 0, //size
+		0x68, 0x10, 0, 0, //ppm X
+		0x68, 0x10, 0, 0, //ppm Y
+		0, 0, 0, 0, //palette size
+		0, 0, 0, 0 //important colors
+	};
+
+	int depth = (paletteSize <= 16) ? 4 : 8;
+	int paletteDataSize = paletteSize * 4;
+	unsigned char *paletteData = (unsigned char *) calloc(paletteDataSize, 1);
+	for (int i = 0; i < paletteSize; i++) {
+		COLOR32 c = palette[i];
+		paletteData[i * 4 + 0] = (c >> 16) & 0xFF;
+		paletteData[i * 4 + 1] = (c >> 8) & 0xFF;
+		paletteData[i * 4 + 2] = c & 0xFF;
+	}
+
+	//create bitmap data, don't bother with RLE because it's shit lol
+	int strideLength = (width * depth + 7) / 8;
+	if (strideLength & 3) strideLength = (strideLength + 3) & ~3;
+	int bmpDataSize = strideLength * height;
+	int posShift = (depth == 4) ? 1 : 0;
+
+	unsigned char *bmpData = (unsigned char *) calloc(bmpDataSize, 1);
+	for (int y = 0; y < height; y++) {
+		unsigned char *row = bmpData + y * strideLength;
+
+		for (int x = 0; x < width; x++) {
+			unsigned char old = row[x >> posShift];
+			int index = x + (height - 1 - y) * width;
+			if (depth == 8) {
+				row[x] = indices[index];
+			} else {
+				int idx = indices[index];
+				if (x & 1) {
+					row[x >> 1] = old | idx;
+				} else {
+					row[x >> 1] = idx << 4;
+				}
+			}
+		}
+	}
+
+	*(uint32_t *) (header + 0x02) = sizeof(header) + sizeof(infoHeader) + bmpDataSize + paletteDataSize;
+	*(uint32_t *) (header + 0x0A) = sizeof(header) + sizeof(infoHeader) + paletteDataSize;
+	*(uint32_t *) (infoHeader + 0x04) = width;
+	*(uint32_t *) (infoHeader + 0x08) = height;
+	*(uint16_t *) (infoHeader + 0x0E) = depth;
+	*(uint32_t *) (infoHeader + 0x14) = bmpDataSize;
+	*(uint32_t *) (infoHeader + 0x20) = paletteSize;
+	*(uint32_t *) (infoHeader + 0x24) = paletteSize;
+
+	fwrite(header, sizeof(header), 1, fp);
+	fwrite(infoHeader, sizeof(infoHeader), 1, fp);
+	fwrite(paletteData, paletteDataSize, 1, fp);
+	fwrite(bmpData, bmpDataSize, 1, fp);
+
+	fclose(fp);
+	free(bmpData);
+	free(paletteData);
+}
+
 #ifdef _WIN32
 
 float mylog2(float d) { //UGLY!
@@ -298,7 +405,7 @@ float mylog2(float d) { //UGLY!
 
 //based on suggestions for color counts by SGC, interpolated with a log function
 int chooseColorCount(int bWidth, int bHeight) {
-	int colors = (int) (500.0f * (0.5f * log2((float) bWidth * bHeight) - 5.0f) + 0.5f);
+	int colors = (int) (500.0f * (0.5f * log2f((float) bWidth * bHeight) - 5.0f) + 0.5f);
 	if (sqrt(bWidth * bHeight) < 83.0f) {
 		colors = (int) (8.69f * sqrt(bWidth * bHeight) - 33.02f);
 	}
@@ -312,7 +419,7 @@ int chooseColorCount(int bWidth, int bHeight) {
 
 const char *getFileNameFromPath(const char *path) {
 	int lastIndex = -1;
-	for(int i = 0; i < strlen(path); i++) {
+	for (unsigned int i = 0; i < strlen(path); i++) {
 		if(path[i] == '/' || path[i] == '\\') lastIndex = i;
 	}
 	return path + lastIndex + 1;
@@ -345,7 +452,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int silent = 0;
 	int diffuse = 0;
 	int outputBinary = 1;
-	int outputTga = 0;
+	int outputTga = 0, outputDib = 0;
 	int mode = MODE_BG;
 
 	//BG settings
@@ -405,6 +512,8 @@ int _tmain(int argc, TCHAR **argv) {
 			flipY = 0;
 		} else if (_tcscmp(arg, _T("-ns")) == 0) {
 			outputScreen = 0;
+		} else if (_tcscmp(arg, _T("-od")) == 0) {
+			outputDib = 1;
 		}
 
 		//Texture option
@@ -465,6 +574,10 @@ int _tmain(int argc, TCHAR **argv) {
 		printf("Cannot output NNS TGA for BGs.\n");
 		return 1;
 	}
+	if (mode == MODE_TEXTURE && outputDib) {
+		printf("Cannot output DIB for textures.\n");
+		return 1;
+	}
 
 	//MBS copy of base
 	int baseLength = _tcslen(outBase);
@@ -485,6 +598,12 @@ int _tmain(int argc, TCHAR **argv) {
 		if (depth == 8 && nMaxColors > 256) nMaxColors = 256;
 		if (depth == 8 && nPalettes != 1) nPalettes = 1;
 		if (nPalettes > 16) nPalettes = 16;
+
+		if (outputDib) {
+			outputScreen = 0;
+			nMaxChars = -1;
+			outputBinary = 0;
+		}
 
 		if(!silent) printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
 						   depth, nPalettes, nMaxColors, nMaxChars, diffuse, paletteBase);
@@ -526,9 +645,54 @@ int _tmain(int argc, TCHAR **argv) {
 
 			free(nameBuffer);
 
-		} else { //output header and source file
+		} else if (outputDib) { //output DIB file
 
-			//suffix the filename with .c, So reserve 3 characters+base length.
+			//suffix filename with .bmp, reserve 5 characters+base length
+			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 5, sizeof(TCHAR));
+			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
+			memcpy(nameBuffer + baseLength, _T(".bmp"), 5 * sizeof(TCHAR));
+
+			int charsX = width / 8, charsY = height / 8;
+			int outWidth = charsX * 8, outHeight = charsY * 8;
+			int bytesPerChar = depth == 8 ? 64 : 32;
+			int *indexBuffer = (int *) calloc(outWidth * outHeight, sizeof(int));
+			for (int cy = 0; cy < charsY; cy++) {
+				for (int cx = 0; cx < charsX; cx++) {
+					unsigned char *thisChar = chars + (cx + cy * (charsX)) * bytesPerChar;
+					unsigned short thisScr = screen[cx + cy * charsX]; //this works because no char compression
+					int palIndex = (thisScr >> 12) & 0xF;
+
+					for (int y = 0; y < 8; y++) {
+						for (int x = 0; x < 8; x++) {
+							int indexValue;
+							if (depth == 8) {
+								indexValue = thisChar[x + y * 8];
+							} else {
+								indexValue = thisChar[(x / 2) + y * 4];
+								if ((x & 1) == 0) indexValue &= 0xF;
+								else indexValue >>= 4;
+								indexValue |= (palIndex << 4);
+							}
+							indexBuffer[cx * 8 + x + (cy * 8 + y) * outHeight] = indexValue;
+						}
+					}
+				}
+			}
+
+			COLOR32 *palette32 = (COLOR32 *) calloc(palSize / 2, sizeof(COLOR32));
+			for (int i = 0; i < palSize / 2; i++) {
+				palette32[i] = ColorConvertFromDS(pal[i]);
+			}
+			writeBitmap(palette32, palSize / 2, indexBuffer, width, height, nameBuffer);
+
+			if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+
+			free(palette32);
+			free(indexBuffer);
+			free(nameBuffer);
+		} else  { //output header and source file
+
+				 //suffix the filename with .c, So reserve 3 characters+base length.
 			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 3, sizeof(TCHAR));
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
 			memcpy(nameBuffer + baseLength, _T(".c"), 3 * sizeof(TCHAR));

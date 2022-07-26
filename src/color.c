@@ -46,4 +46,3 @@ COLOR ColorInterpolate(COLOR c1, COLOR c2, float amt) {
 	int b = (int) (GetB(c1) * (1.0f - amt) + GetB(c2) * amt);
 	return r | (g << 5) | (b << 10);
 }
-

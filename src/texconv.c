@@ -10,9 +10,10 @@
 #ifndef _WIN32
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
-#	define TRUE 1
-#	define FALSE 0
 #endif
+
+#define TRUE 1
+#define FALSE 0
 
 int ilog2(int x);
 
@@ -645,7 +646,7 @@ int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *
 				//does NOT fit, we need to rearrange some things.
 
 				while ((firstSlot + nConsumed > nPalettes * 2) || (threshold && fits)) {
-				//determine which two palettes are the most similar.
+					//determine which two palettes are the most similar.
 					int colorIndex1 = -1, colorIndex2 = -1;
 					int distance = findClosestPalettes(palette, colorTable, firstSlot, &colorIndex1, &colorIndex2);
 					if (colorIndex1 == -1) break;
@@ -857,4 +858,3 @@ int textureConvert(CREATEPARAMS *params) {
 	if (params->useFixedPalette) free(params->fixedPalette);
 	return 0;
 }
-

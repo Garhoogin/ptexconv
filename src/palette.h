@@ -226,4 +226,3 @@ double computePaletteErrorYiq(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR3
 // Free all resources consumed by a REDUCTION.
 //
 void destroyReduction(REDUCTION *reduction);
-

@@ -203,4 +203,3 @@ unsigned long long computePaletteError(COLOR32 *px, int nPx, COLOR32 *pal, int n
 	}
 	return error;
 }
-

@@ -225,4 +225,3 @@ int textureDimensionIsValid(int x) {
 	if (x < 8 || x > 1024) return 0;
 	return 1;
 }
-
