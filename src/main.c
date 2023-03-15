@@ -5,6 +5,7 @@
 
 #include "texture.h"
 #include "texconv.h"
+#include "palette.h"
 #include "bggen.h"
 
 #ifdef _WIN32
@@ -20,8 +21,8 @@
 #   define _tcslen strlen
 #   define _ttoi atoi
 
-#	define STB_IMAGE_IMPLEMENTATION
-#	include "stb_image.h"
+#   define STB_IMAGE_IMPLEMENTATION
+#   include "stb_image.h"
 #endif
 
 #define MODE_BG      0
@@ -29,7 +30,7 @@
 
 int _fltused;
 
-#define VERSION "1.2.0.0"
+#define VERSION "1.3.0.0"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -44,6 +45,9 @@ const char *g_helpString = ""
 	"   -oc     Output as C header file\n"
 	"   -d  <n> Use dithering of n% (default 0%)\n"
 	"   -cm <n> Limit palette colors to n, regardless of bit depth\n"
+	"   -bb <n> Lightness-Color balance [1, 39] (default 20)\n"
+	"   -bc <n> Red-Green color balance [1, 39] (default 20)\n"
+	"   -be     Enhance colors in gradients (off by default)\n"
 	"   -s      Silent\n"
 	"   -h      Display help text\n"
 	"\n"
@@ -452,6 +456,9 @@ int _tmain(int argc, TCHAR **argv) {
 	int outputBinary = 1;
 	int outputTga = 0, outputDib = 0;
 	int mode = MODE_BG;
+	int balance = BALANCE_DEFAULT;
+	int colorBalance = BALANCE_DEFAULT;
+	int enhanceColors = 0;
 
 	//BG settings
 	int nMaxChars = 1024;
@@ -487,6 +494,14 @@ int _tmain(int argc, TCHAR **argv) {
 			if (i < argc) nMaxColors = _ttoi(argv[i]);
 		} else if (_tcscmp(arg, _T("-s")) == 0) {
 			silent = 1;
+		} else if (_tcscmp(arg, _T("-bb")) == 0) {
+			i++;
+			if (i < argc) balance = _ttoi(argv[i]);
+		} else if (_tcscmp(arg, _T("-bc")) == 0) {
+			i++;
+			if (i < argc) colorBalance = _ttoi(argv[i]);
+		} else if (_tcscmp(arg, _T("-be")) == 0) {
+			enhanceColors = 1;
 		}
 
 		//BG option
@@ -612,7 +627,8 @@ int _tmain(int argc, TCHAR **argv) {
 		int palSize, charSize, screenSize;
 		int p1, p1max, p2, p2max;
 		bgGenerate(px, width, height, depth, !!diffuse, diffuse / 100.0f, &pal, &chars, &screen, &palSize, &charSize, &screenSize,
-				   paletteBase, nPalettes, 0, 0, nMaxChars != -1, nMaxColors, 0, 0, nMaxChars, &p1, &p1max, &p2, &p2max);
+				   paletteBase, nPalettes, 0, 0, nMaxChars != -1, nMaxColors, 0, 0, nMaxChars, balance, colorBalance, enhanceColors,
+				   &p1, &p1max, &p2, &p2max);
 
 		if (outputBinary) {
 			//output NBFP, NBFC, NBFS.
@@ -728,7 +744,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write character
 			{
-				fprintf(fp, "const u16 %s%s_char[] = {\n    ", prefix, bgName);
+				fprintf(fp, "const unsigned short %s%s_char[] = {\n    ", prefix, bgName);
 				unsigned short *schars = (unsigned short *) chars;
 				int nShort = charSize >> 1;
 				for (int i = 0; i < nShort; i++) {
@@ -740,7 +756,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write palette
 			{
-				fprintf(fp, "const u16 %s%s_pal[] = {\n    ", prefix, bgName);
+				fprintf(fp, "const unsigned short %s%s_pal[] = {\n    ", prefix, bgName);
 				int nShort = palSize >> 1;
 				for (int i = 0; i < nShort; i++) {
 					fprintf(fp, "0x%04x,%c", pal[i], (i + 1) % 16 == 0 ? '\n' : ' ');
@@ -751,7 +767,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			if (outputScreen) {
 				//write screen
-				fprintf(fp, "const u16 %s%s_screen[] = {\n    ", prefix, bgName);
+				fprintf(fp, "const unsigned short %s%s_screen[] = {\n    ", prefix, bgName);
 				int nShort = screenSize >> 1;
 				for (int i = 0; i < nShort; i++) {
 					fprintf(fp, "0x%04x,%c", screen[i], (i + 1) % 16 == 0 ? '\n' : ' ');
@@ -770,11 +786,11 @@ int _tmain(int argc, TCHAR **argv) {
 					paletteBase, width, height);
 			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
 			fprintf(fp, "//\n// Generated character data\n//\n");
-			fprintf(fp, "extern const u16 %s%s_char[%d];\n\n", prefix, bgName, charSize / 2);
+			fprintf(fp, "extern const unsigned short %s%s_char[%d];\n\n", prefix, bgName, charSize / 2);
 			fprintf(fp, "//\n// Generated palette data\n//\n");
-			fprintf(fp, "extern const u16 %s%s_pal[%d];\n\n", prefix, bgName, palSize / 2);
+			fprintf(fp, "extern const unsigned short %s%s_pal[%d];\n\n", prefix, bgName, palSize / 2);
 			fprintf(fp, "//\n// Generated screen data\n//\n");
-			fprintf(fp, "extern const u16 %s%s_screen[%d];\n\n", prefix, bgName, screenSize / 2);
+			fprintf(fp, "extern const unsigned short %s%s_screen[%d];\n\n", prefix, bgName, screenSize / 2);
 
 			fclose(fp);
 
@@ -847,6 +863,9 @@ int _tmain(int argc, TCHAR **argv) {
 		params.height = height;
 		params.px = px;
 		params.threshold = 0;
+		params.balance = balance;
+		params.colorBalance = colorBalance;
+		params.enhanceColors = enhanceColors;
 		memset(params.pnam, 0, sizeof(params.pnam));
 
 		if (fixedPalette != NULL) {
@@ -855,7 +874,7 @@ int _tmain(int argc, TCHAR **argv) {
 			int size = ftell(fp);
 			fseek(fp, 0, SEEK_SET);
 			params.fixedPalette = (COLOR *) malloc(size);
-			fread(params.fixedPalette, 2, size >> 1, fp);
+			(void) fread(params.fixedPalette, 2, size >> 1, fp);
 			fclose(fp);
 
 			if (params.colorEntries > (size >> 1)) {
@@ -947,7 +966,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write texel
 			{
-				fprintf(fp, "const u16 %s%s_texel[] = {\n    ", prefix, texName);
+				fprintf(fp, "const unsigned short %s%s_texel[] = {\n    ", prefix, texName);
 				unsigned short *txel = (unsigned short *) texture.texels.texel;
 				int nShort = texelSize >> 1;
 				for (int i = 0; i < nShort; i++) {
@@ -959,7 +978,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write index
 			if (format == CT_4x4) {
-				fprintf(fp, "const u16 %s%s_idx[] = {\n    ", prefix, texName);
+				fprintf(fp, "const unsigned short %s%s_idx[] = {\n    ", prefix, texName);
 				unsigned short *pidx = (unsigned short *) texture.texels.cmp;
 				int nShort = indexSize >> 1;
 				for (int i = 0; i < nShort; i++) {
@@ -971,7 +990,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write palette
 			if (format != CT_DIRECT) {
-				fprintf(fp, "const u16 %s%s_pal[] = {\n    ", prefix, texName);
+				fprintf(fp, "const unsigned short %s%s_pal[] = {\n    ", prefix, texName);
 				unsigned short *pcol = (unsigned short *) texture.palette.pal;
 				int nShort = texture.palette.nColors;
 				for (int i = 0; i < nShort; i++) {
@@ -992,14 +1011,14 @@ int _tmain(int argc, TCHAR **argv) {
 					TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
 			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
 			fprintf(fp, "//\n// Generated texel data\n//\n");
-			fprintf(fp, "extern const u16 %s%s_texel[%d];\n\n", prefix, texName, texelSize / 2);
+			fprintf(fp, "extern const unsigned short %s%s_texel[%d];\n\n", prefix, texName, texelSize / 2);
 			if (format == CT_4x4) {
 				fprintf(fp, "//\n// Generated index data\n//\n");
-				fprintf(fp, "extern const u16 %s%s_idx[%d];\n\n", prefix, texName, texelSize / 4);
+				fprintf(fp, "extern const unsigned short %s%s_idx[%d];\n\n", prefix, texName, texelSize / 4);
 			}
 			if (format != CT_DIRECT) {
 				fprintf(fp, "//\n// Generated palette data\n//\n");
-				fprintf(fp, "extern const u16 %s%s_pal[%d];\n\n", prefix, texName, texture.palette.nColors);
+				fprintf(fp, "extern const unsigned short %s%s_pal[%d];\n\n", prefix, texName, texture.palette.nColors);
 			}
 			fclose(fp);
 

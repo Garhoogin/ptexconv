@@ -6,6 +6,8 @@
 #define BALANCE_MIN      1
 #define BALANCE_MAX      39
 
+#define RECLUSTER_DEFAULT 8
+
 //
 // Comparator for use with qsort, sortrs an array of colors by lightness.
 //
@@ -50,7 +52,7 @@ void ditherImagePalette(COLOR32 *img, int width, int height, COLOR32 *palette, i
 // Apply dithering to a whole image using adaptive error diffusion, while
 // allowing use of specific balance settings.
 //
-void ditherImagePaletteEx(COLOR32 *img, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse, int balance, int colorBalance, int enhanceColors);
+void ditherImagePaletteEx(COLOR32 *img, int *indices, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse, int balance, int colorBalance, int enhanceColors);
 
 //
 // Calculate the average color from a list of colors
@@ -91,8 +93,8 @@ int countColors(COLOR32 *px, int nPx);
 
 //
 // Compute palette error for a block of pixels. The alpha threshold is used to
-// determine which pixels should be treated as transparent and ignored for the
-// calculation. nMaxError specifies the maximum error to calculate before
+// determine which pixels should be treated as transparent and ignored for the 
+// calculation. nMaxError specifies the maximum error to calculate before 
 // stopping.
 //
 unsigned long long computePaletteError(COLOR32 *px, int nPx, COLOR32 *pal, int nColors, int alphaThreshold, unsigned long long nMaxError);
@@ -106,6 +108,7 @@ typedef struct HIST_ENTRY_ {
 	int q;
 	int a;
 	struct HIST_ENTRY_ *next;
+	int entry;
 	double weight;
 	double value;
 } HIST_ENTRY;
@@ -141,6 +144,16 @@ typedef struct HISTOGRAM_ {
 	int firstSlot;
 } HISTOGRAM;
 
+//struct for totaling a bucket in reclustering
+typedef struct {
+	double y;
+	double i;
+	double q;
+	double a;
+	double weight;
+	double error;
+} TOTAL_BUFFER;
+
 //reduction workspace structure
 typedef struct REDUCTION_ {
 	int nPaletteColors;
@@ -149,13 +162,18 @@ typedef struct REDUCTION_ {
 	int iWeight;
 	int qWeight;
 	int enhanceColors;
+	int nReclusters;
 	int maskColors;
 	int optimization;
 	HISTOGRAM *histogram;
 	HIST_ENTRY **histogramFlat;
+	TOTAL_BUFFER blockTotals[256];
 	COLOR_NODE *colorTreeHead;
 	COLOR_NODE *colorBlocks[0x2000];
 	uint8_t paletteRgb[256][3];
+	uint8_t paletteRgbCopy[256][3];
+	int paletteYiq[256][4];
+	int paletteYiqCopy[256][4];
 	double lumaTable[512];
 	double gamma;
 } REDUCTION;
@@ -206,12 +224,6 @@ void flattenHistogram(REDUCTION *reduction);
 void optimizePalette(REDUCTION *reduction);
 
 //
-// Flatten's a REDUCTION's palette into an array of RGB colors. Do this once
-// the palette is optimized.
-//
-void paletteToArray(REDUCTION *reduction);
-
-//
 // Find the closest YIQA color to a specified YIQA color with a provided
 // reduction context.
 //
@@ -223,6 +235,17 @@ int closestPaletteYiq(REDUCTION *reduction, int *yiqColor, int *palette, int nCo
 double computePaletteErrorYiq(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *pal, int nColors, int alphaThreshold, double nMaxError);
 
 //
+// Compute palette error on a histogram.
+//
+double computeHistogramPaletteError(REDUCTION *reduction, COLOR32 *palette, int nColors, double maxError);
+
+//
+// Compute palette error on a histogram for a YIQ palette.
+//
+double computeHistogramPaletteErrorYiq(REDUCTION *reduction, int *yiqPalette, int nColors, double maxError);
+
+//
 // Free all resources consumed by a REDUCTION.
 //
 void destroyReduction(REDUCTION *reduction);
+

@@ -10,10 +10,9 @@
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
 #	define __inline
+#	define TRUE 1
+#	define FALSE 0
 #endif
-
-#define TRUE 1
-#define FALSE 0
 
 //struct for internal processing of color leaves
 typedef struct {
@@ -24,7 +23,7 @@ typedef struct {
 	double partialSumWeights;
 	double weightedSquares;
 	double weight;
-} COLOR_INFO;
+} COLOR_INFO; 
 
 void initReduction(REDUCTION *reduction, int balance, int colorBalance, int optimization, int enhanceColors, unsigned int nColors) {
 	memset(reduction, 0, sizeof(REDUCTION));
@@ -33,6 +32,7 @@ void initReduction(REDUCTION *reduction, int balance, int colorBalance, int opti
 	reduction->optimization = optimization;
 	reduction->qWeight = 40 - colorBalance;
 	reduction->enhanceColors = enhanceColors;
+	reduction->nReclusters = RECLUSTER_DEFAULT;// nColors <= 32 ? RECLUSTER_DEFAULT : 0;
 	reduction->nPaletteColors = nColors;
 	reduction->gamma = 1.27;
 	reduction->maskColors = TRUE;
@@ -197,7 +197,12 @@ void yiqToRgb(int *rgb, int *yiq) {
 }
 
 void flattenHistogram(REDUCTION *reduction) {
-	if (reduction->histogramFlat != NULL) free(reduction->histogram);
+	if (reduction->histogramFlat != NULL) free(reduction->histogramFlat);
+
+	if (reduction->histogram == NULL) {
+		reduction->histogramFlat = NULL;
+		return;
+	}
 
 	reduction->histogramFlat = (HIST_ENTRY **) calloc(reduction->histogram->nEntries, sizeof(HIST_ENTRY *));
 	HIST_ENTRY **pos = reduction->histogramFlat;
@@ -283,7 +288,7 @@ void createLeaves(COLOR_NODE *tree, int pivotIndex) {
 
 		if (pivotIndex > tree->startIndex && pivotIndex < tree->endIndex) {
 			COLOR_NODE *newNode = (COLOR_NODE *) calloc(1, sizeof(COLOR_NODE));
-
+			
 			newNode->a = 0xFF;
 			newNode->isLeaf = TRUE;
 			newNode->startIndex = tree->startIndex;
@@ -313,7 +318,7 @@ COLOR_NODE *getLeaf(COLOR_NODE *tree) {
 	if (tree->right != NULL) {
 		leafRight = getLeaf(tree->right);
 	}
-
+	
 	if (leafLeft != NULL && leafRight == NULL) return leafLeft;
 	if (leafRight != NULL && leafLeft == NULL) return leafRight;
 	if (leafLeft == NULL && leafRight == NULL) return NULL;
@@ -533,7 +538,7 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 			+ histEntry->i * iWeight
 			+ histEntry->q * qWeight
 			+ histEntry->a * aWeight;
-
+			
 		histEntry->value = value;
 		if (value >= greatestValue) {
 			greatestValue = value;
@@ -572,7 +577,7 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 		colorInfo[i].weightedSquares = weight * lengthSquared(cy, ci, cq);
 		colorInfo[i].weight = weight;
 	}
-
+	
 	//gather statistics
 	double totalWeight = 0.0, totalY = 0.0, sumWeightedSquares = 0.0, totalI = 0.0, totalQ = 0.0, totalA = 0.0;
 	for (int i = 0; i < nColors; i++) {
@@ -652,10 +657,6 @@ double addPriorities(COLOR_NODE *n1, COLOR_NODE *n2, REDUCTION *reduction) {
 	return (p1 + p2) / adjustedWeight;
 }
 
-COLOR32 maskColor(COLOR32 color) {
-	return ColorConvertFromDS(ColorConvertToDS(color & 0xFFFFFF));
-}
-
 COLOR_NODE *findNodeByColor(COLOR_NODE *treeHead, COLOR_NODE *src, int maskColors) {
 	if (treeHead == NULL || treeHead == src) return NULL;
 
@@ -672,14 +673,14 @@ COLOR_NODE *findNodeByColor(COLOR_NODE *treeHead, COLOR_NODE *src, int maskColor
 	int yiq[] = { src->y, src->i, src->q, 0 };
 	yiqToRgb(rgb, yiq);
 	COLOR32 compare = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
-	if(maskColors) compare = maskColor(compare);
+	if (maskColors) compare = ColorRoundToDS15(compare);
 
 	yiq[0] = treeHead->y;
 	yiq[1] = treeHead->i;
 	yiq[2] = treeHead->q;
 	yiqToRgb(rgb, yiq);
 	COLOR32 thisRgb = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
-	if(maskColors) thisRgb = maskColor(thisRgb);
+	if (maskColors) thisRgb = ColorRoundToDS15(thisRgb);
 
 	return (compare == thisRgb) ? treeHead : NULL;
 }
@@ -717,7 +718,231 @@ void cleanEmptyNode(COLOR_NODE *treeHead, COLOR_NODE *node) {
 	freeColorTree(node, TRUE);
 }
 
+COLOR_NODE **addColorBlocks(COLOR_NODE *colorBlock, COLOR_NODE **colorBlockList) {
+	if (colorBlock->left == NULL && colorBlock->right == NULL) {
+		*colorBlockList = colorBlock;
+		return colorBlockList + 1;
+	}
+	if (colorBlock->left != NULL) {
+		colorBlockList = addColorBlocks(colorBlock->left, colorBlockList);
+	}
+	if (colorBlock->right != NULL) {
+		colorBlockList = addColorBlocks(colorBlock->right, colorBlockList);
+	}
+	return colorBlockList;
+}
+
+void paletteToArray(REDUCTION *reduction) {
+	if (reduction->colorTreeHead == NULL) return;
+
+	//convert to RGB
+	int ofs = 0;
+	COLOR_NODE **colorBlockPtr = reduction->colorBlocks;
+	for (int i = 0; i < reduction->nPaletteColors; i++) {
+		if (colorBlockPtr[i] != NULL) {
+			COLOR_NODE *block = colorBlockPtr[i];
+			int y = block->y, i = block->i, q = block->q, a = block->a;
+			int yiq[] = { y, i, q, a };
+			int rgb[4];
+			yiqToRgb(rgb, yiq);
+
+			COLOR32 rgb32 = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
+			if (reduction->maskColors) rgb32 = ColorRoundToDS15(rgb32);
+
+			//write RGB
+			reduction->paletteRgb[ofs][0] = rgb32 & 0xFF;
+			reduction->paletteRgb[ofs][1] = (rgb32 >> 8) & 0xFF;
+			reduction->paletteRgb[ofs][2] = (rgb32 >> 16) & 0xFF;
+
+			//write YIQ (with any loss of information to RGB)
+			rgbToYiq(rgb32, &reduction->paletteYiq[ofs][0]);
+			ofs++;
+		}
+	}
+}
+
+double __inline computeColorDifferenceYiq(REDUCTION *reduction, int *yiq1, int *yiq2) {
+	double yw2 = reduction->yWeight * reduction->yWeight;
+	double iw2 = reduction->iWeight * reduction->iWeight;
+	double qw2 = reduction->qWeight * reduction->qWeight;
+
+	double dy = reduction->lumaTable[yiq1[0]] - reduction->lumaTable[yiq2[0]];
+	double di = yiq1[1] - yiq2[1];
+	double dq = yiq1[2] - yiq2[2];
+	return yw2 * dy * dy + iw2 * di * di + qw2 * dq * dq;
+}
+
+void iterateRecluster(REDUCTION *reduction) {
+	//simple termination conditions
+	int nIterations = reduction->nReclusters;
+	if (nIterations <= 0) return;
+	if (reduction->nUsedColors < reduction->nPaletteColors) return;
+	if (reduction->nUsedColors >= reduction->histogram->nEntries) return;
+
+	int nHistEntries = reduction->histogram->nEntries;
+	double yw2 = reduction->yWeight * reduction->yWeight;
+	double iw2 = reduction->iWeight * reduction->iWeight;
+	double qw2 = reduction->qWeight * reduction->qWeight;
+
+	//keep track of error. Used to abort if we mess up the palette
+	double error = 0.0, lastError = 1e32;
+
+	//copy main palette to palette copy
+	memcpy(reduction->paletteYiqCopy, reduction->paletteYiq, sizeof(reduction->paletteYiq));
+	memcpy(reduction->paletteRgbCopy, reduction->paletteRgb, sizeof(reduction->paletteRgb));
+
+	//iterate up to n times
+	int nRecomputes = 0;
+	TOTAL_BUFFER *totalsBuffer = reduction->blockTotals;
+	for (int k = 0; k < nIterations; k++) {
+		//reset block totals
+		memset(totalsBuffer, 0, sizeof(reduction->blockTotals));
+
+		//voronoi iteration
+		for (int i = 0; i < nHistEntries; i++) {
+			HIST_ENTRY *entry = reduction->histogramFlat[i];
+			double weight = entry->weight;
+			int hy = entry->y, hi = entry->i, hq = entry->q, ha = entry->a;
+
+			double bestDistance = 1e30;
+			int bestIndex = 0;
+			for (int j = 0; j < reduction->nUsedColors; j++) {
+				int *pyiq = &reduction->paletteYiqCopy[j][0];
+
+				double dy = hy - pyiq[0];
+				double di = hi - pyiq[1];
+				double dq = hq - pyiq[2];
+				double diff = yw2 * dy * dy + iw2 * di * di + qw2 * dq * dq;
+				if (diff < bestDistance) {
+					bestDistance = diff;
+					bestIndex = j;
+				}
+			}
+
+			//add to total
+			totalsBuffer[bestIndex].weight += weight;
+			totalsBuffer[bestIndex].y += reduction->lumaTable[hy] * weight;
+			totalsBuffer[bestIndex].i += hi * weight;
+			totalsBuffer[bestIndex].q += hq * weight;
+			totalsBuffer[bestIndex].a += ha * weight;
+			totalsBuffer[bestIndex].error += bestDistance * weight;
+			entry->entry = bestIndex;
+
+			error += bestDistance * weight;
+		}
+
+		//quick sanity check of bucket weights (if any are 0, find another color for it.)
+		int doRecompute = 0;
+		for (int i = 0; i < reduction->nUsedColors; i++) {
+			if (totalsBuffer[i].weight <= 0.0) {
+				//find the color farthest from this center
+				double largestDifference = 0.0;
+				int farthestIndex = 0;
+				for (int j = 0; j < nHistEntries; j++) {
+					HIST_ENTRY *entry = reduction->histogramFlat[j];
+					int bucket = entry->entry;
+					int *yiq1 = &reduction->paletteYiqCopy[bucket][0];
+
+					int yiq2[] = { entry->y, entry->i, entry->q, 0xFF };
+					double diff = computeColorDifferenceYiq(reduction, yiq1, yiq2) * entry->weight;
+					if (diff > largestDifference) {
+						largestDifference = diff;
+						farthestIndex = j;
+					}
+				}
+
+				//get RGB of new point
+				HIST_ENTRY *entry = reduction->histogramFlat[farthestIndex];
+				int rgb[4] = { 0 };
+				int yiq[4] = { entry->y, entry->i, entry->q, 0xFF };
+				yiqToRgb(rgb, yiq);
+				COLOR32 as32 = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16) | 0xFF000000;
+				if (reduction->maskColors) as32 = ColorRoundToDS15(as32) | 0xFF000000;
+				
+				//set this node's center to the point
+				rgbToYiq(as32, &reduction->paletteYiqCopy[i][0]);
+				reduction->paletteRgbCopy[i][0] = as32 & 0xFF;
+				reduction->paletteRgbCopy[i][1] = (as32 >> 8) & 0xFF;
+				reduction->paletteRgbCopy[i][2] = (as32 >> 8) & 0xFF;
+				
+				//now that we've changed the palette copy, we need to recompute boundaries.
+				doRecompute = 1;
+				break;
+			}
+		}
+
+		//if we need to recompute boundaries, do so now. Be careful!! Doing this dumbly has a
+		//risk of looping forever! For now just limit the number of recomputations
+		if (doRecompute && nRecomputes < 2) {
+			nRecomputes++;
+			k--;
+			continue;
+		}
+		nRecomputes = 0;
+
+		//after recomputing bounds, now let's see if we're wasting any slots.
+		for (int i = 0; i < reduction->nUsedColors; i++) {
+			if (totalsBuffer[i].weight <= 0.0) return;
+		}
+
+		//also check palette error; if we've started rising, we passed our locally optimal palette
+		if (error > lastError) {
+			return;
+		}
+
+		//check: is the palette the same after this iteration as lst?
+		if (error == lastError)
+			if (memcmp(reduction->paletteRgb, reduction->paletteRgbCopy, sizeof(reduction->paletteRgb)) == 0)
+				return;
+
+		//weight check succeeded, copy this palette to the main palette.
+		memcpy(reduction->paletteYiq, reduction->paletteYiqCopy, sizeof(reduction->paletteYiqCopy));
+		memcpy(reduction->paletteRgb, reduction->paletteRgbCopy, sizeof(reduction->paletteRgbCopy));
+
+		//if this is the last iteration, skip the new block totals since they won't affect anything
+		if (k == nIterations - 1) break;
+
+		//average out the colors in the new partitions
+		for (int i = 0; i < reduction->nUsedColors; i++) {
+			double weight = totalsBuffer[i].weight;
+			double avgY = totalsBuffer[i].y / weight;
+			double avgI = totalsBuffer[i].i / weight;
+			double avgQ = totalsBuffer[i].q / weight;
+			double avgA = totalsBuffer[i].a / weight;
+
+			//delinearize Y
+			avgY = 511.0 * pow(avgY * 0.00195695, 1.0 / reduction->gamma);
+
+			//convert to integer YIQ
+			int iy = (int) (avgY + 0.5);
+			int ii = (int) (avgI + (avgI < 0 ? -0.5 : 0.5));
+			int iq = (int) (avgQ + (avgQ < 0 ? -0.5 : 0.5));
+			int ia = (int) (avgA + 0.5);
+
+			//to RGB
+			int rgb[4];
+			int yiq[] = { iy, ii, iq, ia };
+			yiqToRgb(rgb, yiq);
+			COLOR32 as32 = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
+			if (reduction->maskColors) as32 = ColorRoundToDS15(as32);
+
+			reduction->paletteRgbCopy[i][0] = as32 & 0xFF;
+			reduction->paletteRgbCopy[i][1] = (as32 >> 8) & 0xFF;
+			reduction->paletteRgbCopy[i][2] = (as32 >> 16) & 0xFF;
+			rgbToYiq(as32, &reduction->paletteYiqCopy[i][0]);
+		}
+
+		lastError = error;
+		error = 0.0;
+	}
+}
+
 void optimizePalette(REDUCTION *reduction) {
+	if (reduction->histogramFlat == NULL) {
+		reduction->nUsedColors = 0;
+		return;
+	}
+
 	//do it
 	COLOR_NODE *treeHead = (COLOR_NODE *) calloc(1, sizeof(COLOR_NODE));
 	treeHead->isLeaf = TRUE;
@@ -794,8 +1019,8 @@ void optimizePalette(REDUCTION *reduction) {
 				COLOR32 leftRgb = decodedLeft[0] | (decodedLeft[1] << 8) | (decodedLeft[2] << 16);
 				COLOR32 rightRgb = decodedRight[0] | (decodedRight[1] << 8) | (decodedRight[2] << 16);
 				if (reduction->maskColors && numberOfTreeElements > 2) { //don't prune too quickly
-					leftRgb = maskColor(leftRgb);
-					rightRgb = maskColor(rightRgb);
+					leftRgb = ColorRoundToDS15(leftRgb);
+					rightRgb = ColorRoundToDS15(rightRgb);
 				}
 
 				if (leftRgb == rightRgb && leftAlpha == rightAlpha) {
@@ -883,49 +1108,17 @@ void optimizePalette(REDUCTION *reduction) {
 	}
 
 	reduction->nUsedColors = numberOfTreeElements;
-}
-
-COLOR_NODE **addColorBlocks(COLOR_NODE *colorBlock, COLOR_NODE **colorBlockList) {
-	if (colorBlock->left == NULL && colorBlock->right == NULL) {
-		*colorBlockList = colorBlock;
-		return colorBlockList + 1;
-	}
-	if(colorBlock->left != NULL) {
-		colorBlockList = addColorBlocks(colorBlock->left, colorBlockList);
-	}
-	if (colorBlock->right != NULL) {
-		colorBlockList = addColorBlocks(colorBlock->right, colorBlockList);
-	}
-	return colorBlockList;
-}
-
-void paletteToArray(REDUCTION *reduction) {
-	if (reduction->colorTreeHead == NULL) return;
 
 	//flatten
 	COLOR_NODE **colorBlockPtr = reduction->colorBlocks;
 	memset(colorBlockPtr, 0, sizeof(reduction->colorBlocks));
 	addColorBlocks(reduction->colorTreeHead, colorBlockPtr);
 
-	//convert to RGB
-	int ofs = 0;
-	for (int i = 0; i < reduction->nPaletteColors; i++) {
-		if (colorBlockPtr[i] != NULL) {
-			COLOR_NODE *block = colorBlockPtr[i];
-			int y = block->y, i = block->i, q = block->q;
-			int yiq[] = { y, i, q, 0xFF };
-			int rgb[4];
-			yiqToRgb(rgb, yiq);
+	//to array
+	paletteToArray(reduction);
 
-			COLOR32 rgb32 = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
-			//if (reduction->maskColors) rgb32 = maskColor(rgb32);
-
-			reduction->paletteRgb[ofs][0] = rgb32 & 0xFF;
-			reduction->paletteRgb[ofs][1] = (rgb32 >> 8) & 0xFF;
-			reduction->paletteRgb[ofs][2] = (rgb32 >> 16) & 0xFF;
-			ofs++;
-		}
-	}
+	//perform voronoi iteration
+	iterateRecluster(reduction);
 }
 
 void freeAllocations(ALLOCATOR *allocator) {
@@ -970,8 +1163,7 @@ int createPaletteSlow(COLOR32 *img, int width, int height, COLOR32 *pal, unsigne
 	computeHistogram(reduction, img, width, height);
 	flattenHistogram(reduction);
 	optimizePalette(reduction);
-	paletteToArray(reduction);
-
+	
 	for (unsigned int i = 0; i < nColors; i++) {
 		uint8_t r = reduction->paletteRgb[i][0];
 		uint8_t g = reduction->paletteRgb[i][1];
@@ -1003,15 +1195,17 @@ void copyTile(TILE *dest, COLOR32 *pxOrigin, int width) {
 
 int findClosestPaletteColorRGB(int *palette, int nColors, COLOR32 col, int *outDiff) {
 	int rgb[4];
-	int r = col & 0xFF, g = (col >> 8) & 0xFF, b = (col >> 16) & 0xFF;
+	int y, u, v;
+	convertRGBToYUV(col & 0xFF, (col >> 8) & 0xFF, (col >> 16) & 0xFF, &y, &u, &v);
 
 	int leastDiff = 0x7FFFFFFF;
 	int leastIndex = 0;
 	for (int i = 0; i < nColors; i++) {
-		int dy, du, dv;
+		int y2, u2, v2;
 		yiqToRgb(rgb, palette + i * 4);
-		convertRGBToYUV(rgb[0] - r, rgb[1] - g, rgb[2] - b, &dy, &du, &dv);
+		convertRGBToYUV(rgb[0], rgb[1], rgb[2], &y2, &u2, &v2);
 
+		int dy = y2 - y, du = u2 - u, dv = v2 - v;
 		int diff = dy * dy * 2 + du * du + dv * dv;
 		if (diff < leastDiff) {
 			leastDiff = diff;
@@ -1020,6 +1214,48 @@ int findClosestPaletteColorRGB(int *palette, int nColors, COLOR32 col, int *outD
 	}
 	if (outDiff != NULL) *outDiff = leastDiff;
 	return leastIndex;
+}
+
+double computeHistogramPaletteErrorYiq(REDUCTION *reduction, int *yiqPalette, int nColors, double maxError) {
+	double error = 0.0;
+
+	//sum total weighted squared differences
+	double yw2 = reduction->yWeight * reduction->yWeight;
+	double iw2 = reduction->iWeight * reduction->iWeight;
+	double qw2 = reduction->qWeight * reduction->qWeight;
+	for (int i = 0; i < reduction->histogram->nEntries; i++) {
+		HIST_ENTRY *entry = reduction->histogramFlat[i];
+		int cy = entry->y, ci = entry->i, cq = entry->q;
+		int yiq[] = { cy, ci, cq, 0xFF };
+		
+		int closest = closestPaletteYiq(reduction, yiq, yiqPalette, nColors);
+		int *closestYiq = yiqPalette + 4 * closest;
+		int dy = cy - closestYiq[0];
+		int di = ci - closestYiq[1];
+		int dq = cq - closestYiq[2];
+		error += (yw2 * dy * dy + iw2 * di * di + qw2 * dq * dq) * entry->weight;
+
+		if (error >= maxError) return maxError;
+	}
+	return error;
+}
+
+double computeHistogramPaletteError(REDUCTION *reduction, COLOR32 *palette, int nColors, double maxError) {
+	int yiqPaletteStack[16 * 4];
+	int *yiqPalette = yiqPaletteStack;
+	if (nColors > 16) {
+		yiqPalette = (int *) calloc(nColors, 4 * sizeof(int));
+	}
+
+	//convert palette colors
+	for (int i = 0; i < nColors; i++) {
+		rgbToYiq(palette[i], yiqPalette + 4 * i);
+	}
+
+	double error = computeHistogramPaletteErrorYiq(reduction, yiqPalette, nColors, maxError);
+
+	if (yiqPalette != yiqPaletteStack) free(yiqPalette);
+	return error;
 }
 
 int findClosestPaletteColor(REDUCTION *reduction, int *palette, int nColors, int *col, int *outDiff) {
@@ -1094,26 +1330,33 @@ done:
 
 void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
 							int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
-	createMultiplePalettesEx(imgBits, tilesX, tilesY, dest, paletteBase, nPalettes, paletteSize, nColsPerPalette,
+	createMultiplePalettesEx(imgBits, tilesX, tilesY, dest, paletteBase, nPalettes, paletteSize, nColsPerPalette, 
 							 paletteOffset, BALANCE_DEFAULT, BALANCE_DEFAULT, 0, progress);
 }
 
 void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
-							  int paletteSize, int nColsPerPalette, int paletteOffset, int balance,
+							  int paletteSize, int nColsPerPalette, int paletteOffset, int balance, 
 							  int colorBalance, int enhanceColors, int *progress) {
 	if (nPalettes == 0) return;
 	if (nPalettes == 1) {
 		if (paletteOffset) {
-			createPaletteSlowEx(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset, paletteSize, balance, colorBalance, enhanceColors, 0);
+			createPaletteSlowEx(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset, nColsPerPalette, balance, colorBalance, enhanceColors, 0);
 		} else {
-			createPaletteSlowEx(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset + 1, paletteSize - 1, balance, colorBalance, enhanceColors, 0);
+			createPaletteSlowEx(imgBits, tilesX * 8, tilesY * 8, dest + (paletteBase * paletteSize) + paletteOffset + 1, nColsPerPalette - 1, balance, colorBalance, enhanceColors, 0);
 			dest[(paletteBase * paletteSize) + paletteOffset] = 0xFF00FF; //transparent fill
 		}
 		return;
 	}
 
-	if (nColsPerPalette >= 16) nColsPerPalette = 15;
+	//if creating a palette with >= 15 colors per palette, final output colors per palette
+	int nFinalColsPerPalette = nColsPerPalette;
+	if (paletteOffset == 0) nFinalColsPerPalette--;
+	if (nFinalColsPerPalette > paletteSize - 1) nFinalColsPerPalette = paletteSize - 1;
 
+	//for palette sizes > 15, this algorithm will process the clustering in 15 colors only.
+	if (paletteOffset == 0) nColsPerPalette--;
+	if (nColsPerPalette >= 16) nColsPerPalette = 15;
+	
 	//3 stage algorithm:
 	//	1 - split into tiles
 	//	2 - map similarities
@@ -1137,7 +1380,6 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 			computeHistogram(reduction, tile->rgb, 8, 8);
 			flattenHistogram(reduction);
 			optimizePalette(reduction);
-			paletteToArray(reduction);
 			for (int i = 0; i < 16; i++) {
 				uint8_t *col = &reduction->paletteRgb[i][0];
 				palBuf[i] = col[0] | (col[1] << 8) | (col[2] << 16);
@@ -1205,7 +1447,6 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 		}
 		flattenHistogram(reduction);
 		optimizePalette(reduction);
-		paletteToArray(reduction);
 
 		//write over the palette of the tile
 		TILE *palTile = tiles + index1;
@@ -1250,26 +1491,122 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 		(*progress)++;
 	}
 
-	//write palettes
+	//get palette output from previous step
 	int nPalettesWritten = 0;
 	int outputOffs = max(paletteOffset, 1);
+	COLOR32 palettes[16 * 16] = { 0 };
+	int paletteIndices[16] = { 0 };
+	reduction->maskColors = TRUE;
 	for (int i = 0; i < nTiles; i++) {
 		TILE *t = tiles + i;
 		if (t->palIndex != i) continue;
 
-		COLOR32 palBuf[16] = { 0 };
-		if(paletteOffset == 0) palBuf[0] = 0xFF00FF;
-		for (int j = 0; j < 15; j++) {
-			int rgb[4];
-			yiqToRgb(rgb, &t->palette[j][0]);
-			palBuf[j + outputOffs] = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
+		//rebuild palette but with masking enabled
+		resetHistogram(reduction);
+		for (int j = 0; j < nTiles; j++) {
+			if (tiles[j].palIndex == t->palIndex) {
+				computeHistogram(reduction, tiles[j].rgb, 8, 8);
+			}
 		}
-		qsort(palBuf + 1, nColsPerPalette, 4, lightnessCompare);
-		memcpy(dest + 16 * (nPalettesWritten + paletteBase), palBuf, sizeof(palBuf));
+		flattenHistogram(reduction);
+		optimizePalette(reduction);
+		
+		for (int j = 0; j < 15; j++) {
+			uint8_t *rgb = &reduction->paletteRgb[j][0];
+			palettes[j + nPalettesWritten * 16] = ColorRoundToDS15(rgb[0] | (rgb[1] << 8) | (rgb[2] << 16));
+		}
+		paletteIndices[nPalettesWritten] = i;
 		nPalettesWritten++;
 		(*progress)++;
 	}
 
+	//palette refinement
+	int nRefinements = 4;
+	int *bestPalettes = (int *) calloc(nTiles, sizeof(int));
+	int *yiqPalette = (int *) calloc(nPalettes, 16 * 4 * sizeof(int));
+	for (int k = 0; k < nRefinements; k++) {
+		//palette to YIQ
+		for (int i = 0; i < nPalettes; i++) {
+			for (int j = 0; j < nColsPerPalette; j++) {
+				rgbToYiq(palettes[i * 16 + j], yiqPalette + 4 * (i * 16 + j));
+			}
+		}
+
+		//find best palette for each tile again
+		for (int i = 0; i < nTiles; i++) {
+			TILE *t = tiles + i;
+			COLOR32 *px = t->rgb;
+			int best = 0;
+			double bestError = 1e32;
+
+			//compute histogram for the tile
+			resetHistogram(reduction);
+			computeHistogram(reduction, px, 8, 8);
+			flattenHistogram(reduction);
+
+			//determine which palette is best for this tile for remap
+			for (int j = 0; j < nPalettes; j++) {
+				double error = computeHistogramPaletteErrorYiq(reduction, yiqPalette + 4 * (j * 16), nColsPerPalette, bestError);
+				if (error < bestError) {
+					bestError = error;
+					best = j;
+				}
+			}
+			bestPalettes[i] = best;
+		}
+
+		//now that we have the new best palette indices, begin regenerating the palettes
+		//in a way pretty similar to before
+		for (int i = 0; i < nPalettes; i++) {
+			resetHistogram(reduction);
+			for (int j = 0; j < nTiles; j++) {
+				if (bestPalettes[j] != i) continue;
+				computeHistogram(reduction, tiles[j].rgb, 8, 8);
+			}
+			flattenHistogram(reduction);
+			optimizePalette(reduction);
+
+			//write back
+			for (int j = 0; j < nColsPerPalette; j++) {
+				uint8_t *rgb = &reduction->paletteRgb[j][0];
+				palettes[j + i * 16] = ColorRoundToDS15(rgb[0] | (rgb[1] << 8) | (rgb[2] << 16));
+			}
+		}
+	}
+	free(yiqPalette);
+
+	//write palettes in the correct size
+	reduction->nPaletteColors = nFinalColsPerPalette;
+	for (int i = 0; i < nPalettes; i++) {
+		//recreate palette so that it can be output in its correct size
+		if (nFinalColsPerPalette != nColsPerPalette) {
+
+			//palette does need to be created again
+			resetHistogram(reduction);
+			for (int j = 0; j < nTiles; j++) {
+				if (bestPalettes[j] != i) continue;
+				computeHistogram(reduction, tiles[j].rgb, 8, 8);
+			}
+			flattenHistogram(reduction);
+			optimizePalette(reduction);
+
+			//write and sort
+			COLOR32 *thisPalDest = dest + paletteSize * (i + paletteBase) + outputOffs;
+			for (int j = 0; j < nFinalColsPerPalette; j++) {
+				uint8_t *rgb = &reduction->paletteRgb[j][0];
+				thisPalDest[j] = ColorRoundToDS15(rgb[0] | (rgb[1] << 8) | (rgb[2] << 16));
+			}
+			qsort(thisPalDest, nFinalColsPerPalette, sizeof(COLOR32), lightnessCompare);
+		} else {
+			//already the correct size; simply sort and copy
+			qsort(palettes + i * 16, nColsPerPalette, 4, lightnessCompare);
+			memcpy(dest + paletteSize * (i + paletteBase) + outputOffs, palettes + i * 16, nColsPerPalette * sizeof(COLOR32));
+		}
+
+		if (paletteOffset == 0) dest[(i + paletteBase) * paletteSize] = 0xFF00FF;
+	}
+
+	free(bestPalettes);
 	destroyReduction(reduction);
 	free(reduction);
 	free(tiles);
@@ -1283,7 +1620,6 @@ int createPaletteSlowEx(COLOR32 *img, int width, int height, COLOR32 *pal, unsig
 	computeHistogram(reduction, img, width, height);
 	flattenHistogram(reduction);
 	optimizePalette(reduction);
-	paletteToArray(reduction);
 
 	for (unsigned int i = 0; i < nColors; i++) {
 		uint8_t r = reduction->paletteRgb[i][0];
@@ -1348,10 +1684,10 @@ int closestPaletteYiq(REDUCTION *reduction, int *yiqColor, int *palette, int nCo
 }
 
 void ditherImagePalette(COLOR32 *img, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse) {
-	ditherImagePaletteEx(img, width, height, palette, nColors, touchAlpha, binaryAlpha, c0xp, diffuse, BALANCE_DEFAULT, BALANCE_DEFAULT, FALSE);
+	ditherImagePaletteEx(img, NULL, width, height, palette, nColors, touchAlpha, binaryAlpha, c0xp, diffuse, BALANCE_DEFAULT, BALANCE_DEFAULT, FALSE);
 }
 
-void ditherImagePaletteEx(COLOR32 *img, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse, int balance, int colorBalance, int enhanceColors) {
+void ditherImagePaletteEx(COLOR32 *img, int *indices, int width, int height, COLOR32 *palette, int nColors, int touchAlpha, int binaryAlpha, int c0xp, float diffuse, int balance, int colorBalance, int enhanceColors) {
 	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
 	initReduction(reduction, balance, colorBalance, 15, enhanceColors, nColors);
 
@@ -1473,6 +1809,7 @@ void ditherImagePaletteEx(COLOR32 *img, int width, int height, COLOR32 *palette,
 				if (diffusedYiq[3] < 128 && c0xp) matched = 0;
 				COLOR32 chosen = (palette[matched] & 0xFFFFFF) | (colorA << 24);
 				img[x + y * width] = chosen;
+				if (indices != NULL) indices[x + y * width] = matched;
 
 				int *chosenYiq = yiqPalette + matched * 4;
 				int offY = colorY - chosenYiq[0];
@@ -1521,6 +1858,7 @@ void ditherImagePaletteEx(COLOR32 *img, int width, int height, COLOR32 *palette,
 				if (c0xp && centerYiq[3] < 128) matched = 0;
 				COLOR32 chosen = (palette[matched] & 0xFFFFFF) | (centerYiq[3] << 24);
 				img[x + y * width] = chosen;
+				if (indices != NULL) indices[x + y * width] = matched;
 			}
 
 			x += hDirection;
@@ -1587,3 +1925,4 @@ double computePaletteErrorYiq(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR3
 	if (paletteYiq != paletteYiqStack) free(paletteYiq);
 	return error;
 }
+

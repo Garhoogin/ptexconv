@@ -1,7 +1,9 @@
 #pragma once
-
 #include "texture.h"
 
+//
+// Structure used by texture conversion functions.
+//
 typedef struct {
 	COLOR32 *px;
 	int width;
@@ -14,26 +16,47 @@ typedef struct {
 	int useFixedPalette;
 	COLOR *fixedPalette;
 	int threshold;
+	int balance;
+	int colorBalance;
+	int enhanceColors;
 	TEXTURE *dest;
 	void (*callback) (void *);
 	void *callbackParam;
 	char pnam[17];
 } CREATEPARAMS;
 
+//
+// Counts the number of colors in an image (transparent counts as a color)
+//
 int countColors(COLOR32 *px, int nPx);
 
-int convertDirect(CREATEPARAMS *params);
+//
+// Convert an image to a direct mode texture
+//
+int textureConvertDirect(CREATEPARAMS *params);
 
-int convertPalette(CREATEPARAMS *params);
+//
+// Convert an image to a paletted texture
+//
+int textureConvertPalette(CREATEPARAMS *params);
 
-int convertTranslucent(CREATEPARAMS *params);
+//
+// Convert an image to a translucent (a3i5 or a5i3) texture
+//
+int textureConvertTranslucent(CREATEPARAMS *params);
 
-//progress markers for convert4x4.
-extern volatile int _globColors;
-extern volatile int _globFinal;
-extern volatile int _globFinished;
+//progress markers for textureConvert4x4.
+extern volatile int g_texCompressionProgress;
+extern volatile int g_texCompressionProgressMax;
+extern volatile int g_texCompressionFinished;
 
-int convert4x4(CREATEPARAMS *params);
+//
+// Convert an image to a 4x4 compressed texture
+//
+int textureConvert4x4(CREATEPARAMS *params);
 
-//to convert a texture directly.
-int textureConvert(CREATEPARAMS *lpParam);
+//
+// Convert a texture given some input parameters.
+//
+int textureConvert(CREATEPARAMS *params);
+
