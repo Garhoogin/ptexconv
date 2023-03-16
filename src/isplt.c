@@ -10,9 +10,10 @@
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
 #	define __inline
-#	define TRUE 1
-#	define FALSE 0
 #endif
+
+#define TRUE 1
+#define FALSE 0
 
 //struct for internal processing of color leaves
 typedef struct {
@@ -23,7 +24,7 @@ typedef struct {
 	double partialSumWeights;
 	double weightedSquares;
 	double weight;
-} COLOR_INFO; 
+} COLOR_INFO;
 
 void initReduction(REDUCTION *reduction, int balance, int colorBalance, int optimization, int enhanceColors, unsigned int nColors) {
 	memset(reduction, 0, sizeof(REDUCTION));
@@ -116,23 +117,23 @@ void rgbToYiq(COLOR32 rgb, int *yiq) {
 	double q = 2.0 * (doubleR * 0.21102 - doubleG * 0.52204 + doubleB * 0.31103);
 	double iCopy = i;
 
-	if(iCopy > 245.0) {
+	if (iCopy > 245.0) {
 		iCopy = 2 * (iCopy - 245.0) * 0.3333333 + 245.0;
 	}
 
-	if(q < -215.0) {
+	if (q < -215.0) {
 		q = 2 * (q + 215.0) * 0.3333333 - 215.0;
 	}
 
 	double iqDiff = q - iCopy;
-	if(iqDiff > 265.0){
+	if (iqDiff > 265.0) {
 		double iqDiffShifted = (iqDiff - 265.0) * 0.25;
 		iCopy += iqDiffShifted;
 		q -= iqDiffShifted;
 	}
 
 	double iqProd;
-	if(iCopy >= 0.0 || q <= 0.0) {
+	if (iCopy >= 0.0 || q <= 0.0) {
 		iqProd = y;
 	} else {
 		iqProd = -(q * iCopy) * 0.00195313 + y;
@@ -159,13 +160,13 @@ void yiqToRgb(int *rgb, int *yiq) {
 	double i = (double) yiq[1];
 	double q = (double) yiq[2];
 	double y;
-	if(i >= 0.0 || q <= 0.0) {
+	if (i >= 0.0 || q <= 0.0) {
 		y = (double) yiq[0];
 	} else {
 		y = ((double) yiq[0]) + (q * i) * 0.00195313;
 	}
-	if(y >= 0.0) {
-		if(y > 511.0) {
+	if (y >= 0.0) {
+		if (y > 511.0) {
 			y = 511.0;
 		}
 	} else {
@@ -173,13 +174,13 @@ void yiqToRgb(int *rgb, int *yiq) {
 	}
 
 	double iqDiff = q - i;
-	if(iqDiff > 265.0) {
+	if (iqDiff > 265.0) {
 		iqDiff = (iqDiff - 265.0) * 0.5;
 		i -= iqDiff;
 		q += iqDiff;
 	}
 
-	if(q < -215.0) {
+	if (q < -215.0) {
 		q = (q + 215.0) * 3.0 * 0.5 - 215.0;
 	}
 
@@ -288,7 +289,7 @@ void createLeaves(COLOR_NODE *tree, int pivotIndex) {
 
 		if (pivotIndex > tree->startIndex && pivotIndex < tree->endIndex) {
 			COLOR_NODE *newNode = (COLOR_NODE *) calloc(1, sizeof(COLOR_NODE));
-			
+
 			newNode->a = 0xFF;
 			newNode->isLeaf = TRUE;
 			newNode->startIndex = tree->startIndex;
@@ -318,7 +319,7 @@ COLOR_NODE *getLeaf(COLOR_NODE *tree) {
 	if (tree->right != NULL) {
 		leafRight = getLeaf(tree->right);
 	}
-	
+
 	if (leafLeft != NULL && leafRight == NULL) return leafLeft;
 	if (leafRight != NULL && leafLeft == NULL) return leafRight;
 	if (leafLeft == NULL && leafRight == NULL) return NULL;
@@ -431,7 +432,7 @@ double approximatePrincipalComponent(REDUCTION *reduction, int startIndex, int e
 				vec[col1] = vecComp1 * f1 + vecComp2 * f2;
 				vec[col0] = 0.0;
 
-				for(int k = 0; k < 4; k++){
+				for (int k = 0; k < 4; k++) {
 					double val1 = eigen[3 - k][col1];
 					double val2 = eigen[3 - k][col2];
 					eigen[3 - k][col1] = val1 * f1 - val2 * f2;
@@ -538,7 +539,7 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 			+ histEntry->i * iWeight
 			+ histEntry->q * qWeight
 			+ histEntry->a * aWeight;
-			
+
 		histEntry->value = value;
 		if (value >= greatestValue) {
 			greatestValue = value;
@@ -577,7 +578,7 @@ void setupLeaf(REDUCTION *reduction, COLOR_NODE *colorBlock) {
 		colorInfo[i].weightedSquares = weight * lengthSquared(cy, ci, cq);
 		colorInfo[i].weight = weight;
 	}
-	
+
 	//gather statistics
 	double totalWeight = 0.0, totalY = 0.0, sumWeightedSquares = 0.0, totalI = 0.0, totalQ = 0.0, totalA = 0.0;
 	for (int i = 0; i < nColors; i++) {
@@ -858,13 +859,13 @@ void iterateRecluster(REDUCTION *reduction) {
 				yiqToRgb(rgb, yiq);
 				COLOR32 as32 = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16) | 0xFF000000;
 				if (reduction->maskColors) as32 = ColorRoundToDS15(as32) | 0xFF000000;
-				
+
 				//set this node's center to the point
 				rgbToYiq(as32, &reduction->paletteYiqCopy[i][0]);
 				reduction->paletteRgbCopy[i][0] = as32 & 0xFF;
 				reduction->paletteRgbCopy[i][1] = (as32 >> 8) & 0xFF;
 				reduction->paletteRgbCopy[i][2] = (as32 >> 8) & 0xFF;
-				
+
 				//now that we've changed the palette copy, we need to recompute boundaries.
 				doRecompute = 1;
 				break;
@@ -1102,7 +1103,7 @@ void optimizePalette(REDUCTION *reduction) {
 					}
 				}
 
-				if(!prunedNode) break;
+				if (!prunedNode) break;
 			}
 		}
 	}
@@ -1131,12 +1132,12 @@ void freeAllocations(ALLOCATOR *allocator) {
 }
 
 void destroyReduction(REDUCTION *reduction) {
-	if(reduction->histogramFlat != NULL) free(reduction->histogramFlat);
+	if (reduction->histogramFlat != NULL) free(reduction->histogramFlat);
 	if (reduction->histogram != NULL) {
 		freeAllocations(&reduction->histogram->allocator);
 		free(reduction->histogram);
 	}
-	if(reduction->colorTreeHead != NULL) freeColorTree(reduction->colorTreeHead, FALSE);
+	if (reduction->colorTreeHead != NULL) freeColorTree(reduction->colorTreeHead, FALSE);
 	free(reduction->colorTreeHead);
 }
 
@@ -1163,7 +1164,7 @@ int createPaletteSlow(COLOR32 *img, int width, int height, COLOR32 *pal, unsigne
 	computeHistogram(reduction, img, width, height);
 	flattenHistogram(reduction);
 	optimizePalette(reduction);
-	
+
 	for (unsigned int i = 0; i < nColors; i++) {
 		uint8_t r = reduction->paletteRgb[i][0];
 		uint8_t g = reduction->paletteRgb[i][1];
@@ -1227,7 +1228,7 @@ double computeHistogramPaletteErrorYiq(REDUCTION *reduction, int *yiqPalette, in
 		HIST_ENTRY *entry = reduction->histogramFlat[i];
 		int cy = entry->y, ci = entry->i, cq = entry->q;
 		int yiq[] = { cy, ci, cq, 0xFF };
-		
+
 		int closest = closestPaletteYiq(reduction, yiq, yiqPalette, nColors);
 		int *closestYiq = yiqPalette + 4 * closest;
 		int dy = cy - closestYiq[0];
@@ -1329,14 +1330,14 @@ done:
 }
 
 void createMultiplePalettes(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
-							int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
-	createMultiplePalettesEx(imgBits, tilesX, tilesY, dest, paletteBase, nPalettes, paletteSize, nColsPerPalette, 
-							 paletteOffset, BALANCE_DEFAULT, BALANCE_DEFAULT, 0, progress);
+	int paletteSize, int nColsPerPalette, int paletteOffset, int *progress) {
+	createMultiplePalettesEx(imgBits, tilesX, tilesY, dest, paletteBase, nPalettes, paletteSize, nColsPerPalette,
+		paletteOffset, BALANCE_DEFAULT, BALANCE_DEFAULT, 0, progress);
 }
 
 void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 *dest, int paletteBase, int nPalettes,
-							  int paletteSize, int nColsPerPalette, int paletteOffset, int balance, 
-							  int colorBalance, int enhanceColors, int *progress) {
+	int paletteSize, int nColsPerPalette, int paletteOffset, int balance,
+	int colorBalance, int enhanceColors, int *progress) {
 	if (nPalettes == 0) return;
 	if (nPalettes == 1) {
 		if (paletteOffset) {
@@ -1356,7 +1357,7 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 	//for palette sizes > 15, this algorithm will process the clustering in 15 colors only.
 	if (paletteOffset == 0) nColsPerPalette--;
 	if (nColsPerPalette >= 16) nColsPerPalette = 15;
-	
+
 	//3 stage algorithm:
 	//	1 - split into tiles
 	//	2 - map similarities
@@ -1510,7 +1511,7 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 		}
 		flattenHistogram(reduction);
 		optimizePalette(reduction);
-		
+
 		for (int j = 0; j < 15; j++) {
 			uint8_t *rgb = &reduction->paletteRgb[j][0];
 			palettes[j + nPalettesWritten * 16] = ColorRoundToDS15(rgb[0] | (rgb[1] << 8) | (rgb[2] << 16));
@@ -1730,11 +1731,11 @@ void ditherImagePaletteEx(COLOR32 *img, int *indices, int width, int height, COL
 			//determine if dithering should happen. Weight the sampled pixels with respect to distance from center.
 
 			int colorY = (thisRow[(x + 1) * 4 + 0] * 3 + thisRow[(x + 2) * 4 + 0] * 3 + thisRow[x * 4 + 0] * 3 + lastRow[(x + 1) * 4 + 0] * 3
-						  + lastRow[x * 4 + 0] * 2 + lastRow[(x + 2) * 4 + 0] * 2) / 16;
+				+ lastRow[x * 4 + 0] * 2 + lastRow[(x + 2) * 4 + 0] * 2) / 16;
 			int colorI = (thisRow[(x + 1) * 4 + 1] * 3 + thisRow[(x + 2) * 4 + 1] * 3 + thisRow[x * 4 + 1] * 3 + lastRow[(x + 1) * 4 + 1] * 3
-						  + lastRow[x * 4 + 1] * 2 + lastRow[(x + 2) * 4 + 1] * 2) / 16;
+				+ lastRow[x * 4 + 1] * 2 + lastRow[(x + 2) * 4 + 1] * 2) / 16;
 			int colorQ = (thisRow[(x + 1) * 4 + 2] * 3 + thisRow[(x + 2) * 4 + 2] * 3 + thisRow[x * 4 + 2] * 3 + lastRow[(x + 1) * 4 + 2] * 3
-						  + lastRow[x * 4 + 2] * 2 + lastRow[(x + 2) * 4 + 2] * 2) / 16;
+				+ lastRow[x * 4 + 2] * 2 + lastRow[(x + 2) * 4 + 2] * 2) / 16;
 			int colorA = thisRow[(x + 1) * 4 + 3];
 
 			if (touchAlpha && binaryAlpha) {
@@ -1925,4 +1926,3 @@ double computePaletteErrorYiq(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR3
 	if (paletteYiq != paletteYiqStack) free(paletteYiq);
 	return error;
 }
-

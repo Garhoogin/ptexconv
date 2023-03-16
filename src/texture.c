@@ -41,7 +41,7 @@ typedef struct {
 	uint8_t a;
 } RGB;
 
-void getrgb(unsigned short n, RGB * ret){
+void getrgb(unsigned short n, RGB * ret) {
 	COLOR32 conv = ColorConvertFromDS(n);
 	ret->r = conv & 0xFF;
 	ret->g = (conv >> 8) & 0xFF;
@@ -50,7 +50,7 @@ void getrgb(unsigned short n, RGB * ret){
 }
 
 char *stringFromFormat(int fmt) {
-	char *fmts[] = {"", "a3i5", "palette4", "palette16", "palette256", "tex4x4", "a5i3", "direct"};
+	char *fmts[] = { "", "a3i5", "palette4", "palette16", "palette256", "tex4x4", "a5i3", "direct" };
 	return fmts[fmt];
 }
 
@@ -64,9 +64,9 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 	switch (format) {
 		case CT_DIRECT:
 		{
-			for(int i = 0; i < nPixels; i++){
+			for (int i = 0; i < nPixels; i++) {
 				unsigned short pVal = *(((unsigned short *) texels->texel) + i);
-				RGB rgb = {0};
+				RGB rgb = { 0 };
 				getrgb(pVal, &rgb);
 				px[i] = rgb.b | (rgb.g << 8) | (rgb.r << 16) | (rgb.a << 24);
 			}
@@ -75,9 +75,9 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 		case CT_4COLOR:
 		{
 			int offs = 0;
-			for(int i = 0; i < txelSize >> 2; i++){
+			for (int i = 0; i < txelSize >> 2; i++) {
 				unsigned d = (unsigned) *(((int *) texels->texel) + i);
-				for(int j = 0; j < 16; j++){
+				for (int j = 0; j < 16; j++) {
 					int pVal = d & 0x3;
 					d >>= 2;
 					if (pVal < palette->nColors) {
@@ -95,7 +95,7 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 		case CT_16COLOR:
 		{
 			int iters = txelSize;
-			for(int i = 0; i < iters; i++){
+			for (int i = 0; i < iters; i++) {
 				unsigned char pVal = *(((unsigned char *) texels->texel) + i);
 				unsigned short col0 = 0;
 				unsigned short col1 = 0;
@@ -105,11 +105,11 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 				if ((pVal >> 4) < palette->nColors) {
 					col1 = palette->pal[pVal >> 4] | 0x8000;
 				}
-				if(c0xp){
-					if(!(pVal & 0xF)) col0 = 0;
-					if(!(pVal >> 4)) col1 = 0;
+				if (c0xp) {
+					if (!(pVal & 0xF)) col0 = 0;
+					if (!(pVal >> 4)) col1 = 0;
 				}
-				RGB rgb = {0};
+				RGB rgb = { 0 };
 				getrgb(col0, &rgb);
 				px[i * 2] = rgb.b | (rgb.g << 8) | (rgb.r << 16) | (rgb.a << 24);
 				getrgb(col1, &rgb);
@@ -119,7 +119,7 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 		}
 		case CT_256COLOR:
 		{
-			for(int i = 0; i < txelSize; i++){
+			for (int i = 0; i < txelSize; i++) {
 				unsigned char pVal = *(texels->texel + i);
 				if (pVal < palette->nColors) {
 					unsigned short col = *(((unsigned short *) palette->pal) + pVal) | 0x8000;
@@ -133,7 +133,7 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 		}
 		case CT_A3I5:
 		{
-			for(int i = 0; i < txelSize; i++){
+			for (int i = 0; i < txelSize; i++) {
 				unsigned char d = texels->texel[i];
 				int alpha = ((d & 0xE0) >> 5) * 255 / 7;
 				int index = d & 0x1F;
@@ -149,7 +149,7 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 		}
 		case CT_A5I3:
 		{
-			for(int i = 0; i < txelSize; i++){
+			for (int i = 0; i < txelSize; i++) {
 				unsigned char d = texels->texel[i];
 				int alpha = ((d & 0xF8) >> 3) * 255 / 31;
 				int index = d & 0x7;
@@ -167,8 +167,8 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 		{
 			int squares = (width * height) >> 4;
 			RGB colors[4] = { 0 };
-			RGB transparent = {0, 0, 0, 0};
-			for(int i = 0; i < squares; i++){
+			RGB transparent = { 0, 0, 0, 0 };
+			for (int i = 0; i < squares; i++) {
 				unsigned texel = *(unsigned *) (texels->texel + (i << 2));
 				unsigned short data = *(unsigned short *) (texels->cmp + i);
 
@@ -210,11 +210,11 @@ void textureRender(COLOR32 *px, TEXELS *texels, PALETTE *palette, int flip) {
 						colors[3].a = 255;
 					}
 				}
-				for(int j = 0; j < 16; j++){
+				for (int j = 0; j < 16; j++) {
 					int pVal = texel & 0x3;
 					texel >>= 2;
 					RGB rgb = colors[pVal];
-					int offs = ((i & ((width >> 2) - 1)) << 2) + (j & 3) + (((i / (width >> 2)) << 2) + (j  >> 2)) * width;
+					int offs = ((i & ((width >> 2) - 1)) << 2) + (j & 3) + (((i / (width >> 2)) << 2) + (j >> 2)) * width;
 					px[offs] = ColorRoundToDS18(rgb.b | (rgb.g << 8) | (rgb.r << 16)) | (rgb.a << 24);
 				}
 			}
@@ -249,4 +249,3 @@ int textureDimensionIsValid(int x) {
 	if (x < 8 || x > 1024) return 0;
 	return 1;
 }
-

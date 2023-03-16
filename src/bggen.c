@@ -86,7 +86,7 @@ void bgAddTileToTotal(REDUCTION *reduction, int *pxBlock, BGTILE *tile) {
 	for (int y = 0; y < 8; y++) {
 		for (int x = 0; x < 8; x++) {
 			COLOR32 col = tile->px[x + y * 8];
-			
+
 			int x2 = (tile->flipMode & TILE_FLIPX) ? (7 - x) : x;
 			int y2 = (tile->flipMode & TILE_FLIPY) ? (7 - y) : y;
 			int *dest = pxBlock + 4 * (x2 + y2 * 8);
@@ -199,7 +199,7 @@ void tdlReset(TILE_DIFF_LIST *list) {
 }
 
 int performCharacterCompression(BGTILE *tiles, int nTiles, int nBits, int nMaxChars, COLOR32 *palette, int paletteSize, int nPalettes,
-								int paletteBase, int paletteOffset, int balance, int colorBalance, int *progress) {
+	int paletteBase, int paletteOffset, int balance, int colorBalance, int *progress) {
 	int nChars = nTiles;
 	float *diffBuff = (float *) calloc(nTiles * nTiles, sizeof(float));
 	unsigned char *flips = (unsigned char *) calloc(nTiles * nTiles, 1); //how must each tile be manipulated to best match its partner
@@ -239,7 +239,7 @@ int performCharacterCompression(BGTILE *tiles, int nTiles, int nBits, int nMaxCh
 					}
 				}
 				nChars--;
-				if(nTiles > nMaxChars) *progress = 500 + (int) (500 * sqrt((float) (nTiles - nChars) / (nTiles - nMaxChars)));
+				if (nTiles > nMaxChars) *progress = 500 + (int) (500 * sqrt((float) (nTiles - nChars) / (nTiles - nMaxChars)));
 			}
 		}
 	}
@@ -275,7 +275,7 @@ int performCharacterCompression(BGTILE *tiles, int nTiles, int nBits, int nMaxCh
 					tdlAdd(&tdl, j, i, thisError);
 				}
 			}
-			
+
 			//now merge tiles while we can
 			int tile1, tile2;
 			while (tdl.diffBuffLength > 0 && nChars > nMaxChars) {
@@ -375,7 +375,7 @@ int performCharacterCompression(BGTILE *tiles, int nTiles, int nBits, int nMaxCh
 
 		//now, match colors to indices.
 		COLOR32 *pal = palette + (bestPalette << nBits);
-		ditherImagePaletteEx(tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset, 
+		ditherImagePaletteEx(tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset,
 			paletteSize - !paletteOffset, 0, 1, 0, 0.0f, balance, colorBalance, 0);
 		for (int j = 0; j < 64; j++) {
 			COLOR32 col = tile->px[j];
@@ -384,7 +384,7 @@ int performCharacterCompression(BGTILE *tiles, int nTiles, int nBits, int nMaxCh
 				index = closestPalette(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset)
 					+ !paletteOffset + paletteOffset;
 			}
-			
+
 			tile->indices[j] = index;
 			tile->px[j] = index ? (pal[index] | 0xFF000000) : 0;
 		}
@@ -444,10 +444,10 @@ void setupBgTilesEx(BGTILE *tiles, int nTiles, int nBits, COLOR32 *palette, int 
 			COLOR32 col = tile->px[j];
 			int index = 0;
 			if (((col >> 24) & 0xFF) > 127) {
-				index = closestPalette(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset) 
+				index = closestPalette(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset)
 					+ !paletteOffset + paletteOffset;
 			}
-			
+
 			tile->indices[j] = index;
 			tile->px[j] = index ? (pal[index] | 0xFF000000) : 0;
 
@@ -464,12 +464,12 @@ void setupBgTilesEx(BGTILE *tiles, int nTiles, int nBits, COLOR32 *palette, int 
 }
 
 void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, float diffuse,
-				COLOR **pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
-				int *outPalSize, int *outCharSize, int *outScreenSize,
-				int paletteBase, int nPalettes, int fmt, int tileBase, int mergeTiles,
-				int paletteSize, int paletteOffset, int rowLimit, int nMaxChars,
-				int balance, int colorBalance, int enhanceColors,
-				int *progress1, int *progress1Max, int *progress2, int *progress2Max) {
+	COLOR **pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
+	int *outPalSize, int *outCharSize, int *outScreenSize,
+	int paletteBase, int nPalettes, int fmt, int tileBase, int mergeTiles,
+	int paletteSize, int paletteOffset, int rowLimit, int nMaxChars,
+	int balance, int colorBalance, int enhanceColors,
+	int *progress1, int *progress1Max, int *progress2, int *progress2Max) {
 
 	//cursory sanity checks
 	if (nBits == 4) {
@@ -502,7 +502,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	//initialize progress
 	*progress1Max = nTiles * 2; //2 passes
 	*progress2Max = 1000;
-	
+
 	COLOR32 *palette = (COLOR32 *) calloc(256, 4);
 	if (nBits < 5) nBits = 4;
 	else nBits = 8;
@@ -520,7 +520,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 		}
 	}
 	*progress1 = nTiles * 2; //make sure it's done
-	
+
 	//split image into 8x8 tiles.
 	for (int y = 0; y < tilesY; y++) {
 		for (int x = 0; x < tilesX; x++) {
@@ -543,7 +543,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	//match tiles to each other
 	int nChars = nTiles;
 	if (mergeTiles) {
-		nChars = performCharacterCompression(tiles, nTiles, nBits, nMaxChars, palette, paletteSize, nPalettes, paletteBase, 
+		nChars = performCharacterCompression(tiles, nTiles, nBits, nMaxChars, palette, paletteSize, nPalettes, paletteBase,
 			paletteOffset, balance, colorBalance, progress2);
 	}
 

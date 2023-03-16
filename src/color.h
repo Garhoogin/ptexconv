@@ -45,4 +45,3 @@ COLOR32 ColorRoundToDS18(COLOR32 c);
 // Interpolate between two 15-bit colors
 //
 COLOR ColorInterpolate(COLOR c1, COLOR c2, float amt);
-

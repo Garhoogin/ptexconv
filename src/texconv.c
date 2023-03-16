@@ -10,9 +10,10 @@
 #ifndef _WIN32
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
-#	define TRUE 1
-#	define FALSE 0
 #endif
+
+#define TRUE 1
+#define FALSE 0
 
 int ilog2(int x);
 
@@ -97,7 +98,7 @@ int textureConvertPalette(CREATEPARAMS *params) {
 	int nBytes = width * height * bitsPerPixel / 8;
 	uint8_t *txel = (uint8_t *) calloc(nBytes, 1);
 	float diffuse = params->dither ? params->diffuseAmount : 0.0f;
-	ditherImagePaletteEx(params->px, NULL, width, height, palette, nColors, TRUE, TRUE, hasTransparent, diffuse, 
+	ditherImagePaletteEx(params->px, NULL, width, height, palette, nColors, TRUE, TRUE, hasTransparent, diffuse,
 		params->balance, params->colorBalance, params->enhanceColors);
 
 	//write texel data.
@@ -177,7 +178,7 @@ int textureConvertTranslucent(CREATEPARAMS *params) {
 		int index = closestPalette(p, palette, nColors);
 		int alpha = (((p >> 24) & 0xFF) * alphaMax + 127) / 255;
 		txel[i] = index | (alpha << alphaShift);
-		if (params->ditherAlpha) {				
+		if (params->ditherAlpha) {
 			int backAlpha = (alpha * 255 + (alphaMax >> 1)) / alphaMax;
 			int errorAlpha = backAlpha - ((p >> 24) & 0xFF);
 			doDiffuse(i, width, height, params->px, 0, 0, 0, -errorAlpha, params->diffuseAmount);
@@ -309,7 +310,7 @@ double testBlockStep(REDUCTION *reduction, COLOR32 *px, int nPx, int transparent
 
 void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) {
 	//if only 1 or 2 colors, fill the palette with those.
-	
+
 	COLOR32 colors[2];
 	int nColors = 0;
 	int transparent = 0;
@@ -513,7 +514,7 @@ void addTile(REDUCTION *reduction, TILEDATA *data, int index, COLOR32 *px, int *
 		data[index].palette[1] = 0;
 		return;
 	}
-	
+
 	//is it a duplicate?
 	int isDuplicate = 0;
 	int duplicateIndex = 0;
@@ -596,7 +597,7 @@ uint16_t getModeFromTable(uint8_t type) {
 
 int computePaletteDifference(COLOR *pal1, COLOR *pal2, int nColors, int nMaxError) {
 	int total = 0;
-	
+
 	for (int i = 0; i < nColors; i++) {
 		if (pal1[i] != pal2[i]) {
 			COLOR32 c1 = ColorConvertFromDS(pal1[i]);
@@ -746,11 +747,11 @@ int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *
 				tile->paletteIndex = firstSlot / 2;
 				firstSlot += nConsumed;
 			}
-			if(!fits || (threshold && firstSlot >= 8)) {
+			if (!fits || (threshold && firstSlot >= 8)) {
 				//does NOT fit, we need to rearrange some things.
 
 				while ((firstSlot + nConsumed > nPalettes * 2) || (threshold && fits)) {
-				//determine which two palettes are the most similar.
+					//determine which two palettes are the most similar.
 					int colorIndex1 = -1, colorIndex2 = -1;
 					int distance = findClosestPalettes(palette, colorTable, firstSlot, &colorIndex1, &colorIndex2);
 					if (colorIndex1 == -1) break;
@@ -803,7 +804,7 @@ void expandPalette(COLOR *nnsPal, uint16_t mode, COLOR32 *dest, int *nOpaque) {
 	mode &= COMP_MODE_MASK;
 	if (mode & COMP_OPAQUE) *nOpaque = 4;
 	else *nOpaque = 3;
-	
+
 	if (mode == (COMP_OPAQUE | COMP_FULL)) {
 		dest[2] = ColorConvertFromDS(nnsPal[2]);
 		dest[3] = ColorConvertFromDS(nnsPal[3]);
@@ -848,7 +849,7 @@ uint16_t findOptimalPidx(REDUCTION *reduction, TILEDATA *tile, COLOR *palette, i
 			//nothing to gain from these modes sometimes
 			if (!hasTransparent && j == 0) continue;
 			if (hasTransparent && j >= 2) break;
-			
+
 			uint16_t mode = (j << 14) | (i >> 1);
 			double dst = computeTilePidxError(reduction, px, palette, mode, leastError);
 			if (dst < leastError) {
@@ -936,7 +937,7 @@ int textureConvert4x4(CREATEPARAMS *params) {
 	params->dest->texels.cmp = (short *) pidx;
 	params->dest->texels.texel = (char *) txel;
 	params->dest->texels.texImageParam = (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23) | (params->fmt << 26);
-	
+
 	free(tileData);
 	return 0;
 }
@@ -967,8 +968,7 @@ int textureConvert(CREATEPARAMS *params) {
 		params->px[i] = REVERSE(p);
 	}
 	g_texCompressionFinished = 1;
-	if(params->callback) params->callback(params->callbackParam);
+	if (params->callback) params->callback(params->callbackParam);
 	if (params->useFixedPalette) free(params->fixedPalette);
 	return 0;
 }
-

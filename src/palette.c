@@ -9,7 +9,7 @@ int lightnessCompare(const void *d1, const void *d2) {
 	COLOR32 c1 = *(COLOR32 *) d1;
 	COLOR32 c2 = *(COLOR32 *) d2;
 	if (c1 == c2) return 0;
-	
+
 	//by properties of linear transformations, this is valid
 	int dr = (c1 & 0xFF) - (c2 & 0xFF);
 	int dg = ((c1 >> 8) & 0xFF) - ((c2 >> 8) & 0xFF);
@@ -43,8 +43,8 @@ int closestPalette(COLOR32 rgb, COLOR32 *palette, int paletteSize) {
 	//else
 	for (i = 0; i < paletteSize; i++) {
 		COLOR32 entry = palette[i];
-		int dr = ((entry >>  0) & 0xFF) - ((rgb >>  0) & 0xFF);
-		int dg = ((entry >>  8) & 0xFF) - ((rgb >>  8) & 0xFF);
+		int dr = ((entry >> 0) & 0xFF) - ((rgb >> 0) & 0xFF);
+		int dg = ((entry >> 8) & 0xFF) - ((rgb >> 8) & 0xFF);
 		int db = ((entry >> 16) & 0xFF) - ((rgb >> 16) & 0xFF);
 
 		convertRGBToYUV(dr, dg, db, &ey, &eu, &ev);
@@ -60,7 +60,7 @@ int closestPalette(COLOR32 rgb, COLOR32 *palette, int paletteSize) {
 }
 
 int m(int a) {
-	return a < 0? 0: (a > 255? 255: a);
+	return a < 0 ? 0 : (a > 255 ? 255 : a);
 }
 
 #define diffuse(a,r,g,b,ap) a=m((int)((a&0xFF)+(r)))|(m((int)(((a>>8)&0xFF)+(g)))<<8)|(m((int)(((a>>16)&0xFF)+(b)))<<16)|(m((int)(((a>>24)&0xFF)+(ap)))<<24)
@@ -137,9 +137,9 @@ unsigned int getPaletteError(COLOR32 *px, int nPx, COLOR32 *pal, int paletteSize
 }
 
 void convertRGBToYUV(int r, int g, int b, int *y, int *u, int *v) {
-	*y = (int) ( 0.2990 * r + 0.5870 * g + 0.1140 * b);
+	*y = (int) (0.2990 * r + 0.5870 * g + 0.1140 * b);
 	*u = (int) (-0.1684 * r - 0.3316 * g + 0.5000 * b);
-	*v = (int) ( 0.5000 * r - 0.4187 * g - 0.0813 * b);
+	*v = (int) (0.5000 * r - 0.4187 * g - 0.0813 * b);
 }
 
 void convertYUVToRGB(int y, int u, int v, int *r, int *g, int *b) {
@@ -166,7 +166,7 @@ int countColors(COLOR32 *px, int nPx) {
 			COLOR32 color = copy[i] & 0xFFFFFF;
 			//has this color come before?
 			int repeat = 0;
-			if(i){
+			if (i) {
 				COLOR32 comp = copy[i - 1] & 0xFFFFFF;
 				if (comp == color) {
 					repeat = 1;
@@ -203,4 +203,3 @@ unsigned long long computePaletteError(COLOR32 *px, int nPx, COLOR32 *pal, int n
 	}
 	return error;
 }
-

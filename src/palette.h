@@ -248,4 +248,3 @@ double computeHistogramPaletteErrorYiq(REDUCTION *reduction, int *yiqPalette, in
 // Free all resources consumed by a REDUCTION.
 //
 void destroyReduction(REDUCTION *reduction);
-

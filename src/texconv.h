@@ -59,4 +59,3 @@ int textureConvert4x4(CREATEPARAMS *params);
 // Convert a texture given some input parameters.
 //
 int textureConvert(CREATEPARAMS *params);
-

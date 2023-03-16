@@ -1,6 +1,6 @@
 #include "color.h"
 
-static uint8_t colorConversionLookupReverse[] = {
+static const uint8_t colorConversionLookupReverse[] = {
 	0,  0,  0,  0,  0,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,
 	2,  2,  2,  2,  2,  3,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,
 	4,  4,  4,  4,  4,  4,  5,  5,  5,  5,  5,  5,  5,  5,  6,  6,
@@ -26,14 +26,14 @@ COLOR ColorConvertToDS(COLOR32 c) {
 	return r | (g << 5) | (b << 10);
 }
 
-static uint8_t colorConversionLookup[] = {
+static const uint8_t colorConversionLookup[] = {
 	0,   8,   16,  25,  33,  41,  49,  58,
 	66,  74,  82,  90,  99,  107, 115, 123,
 	132, 140, 148, 156, 165, 173, 181, 189,
 	197, 206, 214, 222, 230, 239, 247, 255
 };
 
-static uint8_t colorRound6Lookup[] = {
+static const uint8_t colorRound6Lookup[] = {
 	0,   0,   0,   4,   4,   4,   4,   8,   8,   8,   8,   12,  12,  12,  12,  16,
 	16,  16,  16,  20,  20,  20,  20,  24,  24,  24,  24,  28,  28,  28,  28,  32,
 	32,  32,  32,  36,  36,  36,  36,  40,  40,  40,  40,  45,  45,  45,  45,  49,
@@ -85,4 +85,3 @@ COLOR ColorInterpolate(COLOR c1, COLOR c2, float amt) {
 	int b = (int) (GetB(c1) * (1.0f - amt) + GetB(c2) * amt);
 	return r | (g << 5) | (b << 10);
 }
-

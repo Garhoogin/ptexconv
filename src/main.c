@@ -30,6 +30,14 @@
 
 int _fltused;
 
+#ifdef _WIN32
+extern long _ftol(double d);
+
+long _ftol2_sse(float f) { //ugly hack
+	return _ftol(f);
+}
+#endif
+
 #define VERSION "1.3.0.0"
 
 const char *g_helpString = ""
@@ -140,7 +148,7 @@ COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHeight) {
 int isTranslucent(COLOR32 *px, int nWidth, int nHeight) {
 	for (int i = 0; i < nWidth * nHeight; i++) {
 		int a = px[i] >> 24;
-		if (a && a != 255) return 1;
+		if (a >= 5 && a <= 250) return 1;
 	}
 	return 0;
 }
@@ -171,18 +179,14 @@ int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
 		if (nColors <= 4) {
 			fmt = CT_4COLOR;
 		} else {
-			//weigh 16-color, 256-color, and 4x4.
-			//take the number of pixels per color.
+			//weigh 16-color, 256-color, and 4x4. 
+			//take the number of pixels per color. 
 			int pixelsPerColor = 2 * nWidth * nHeight / nColors;
 			if (pixelsPerColor >= 3 && !(nWidth * nHeight >= 1024 * 512)) {
 				fmt = CT_4x4;
-			} else {
+			} else if (nColors < 32) {
 				//otherwise, 4x4 probably isn't a good option.
-				if (nColors < 32) {
-					fmt = CT_16COLOR;
-				} else {
-					fmt = CT_256COLOR;
-				}
+				fmt = CT_16COLOR;
 			}
 		}
 	}
@@ -213,8 +217,8 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	COLOR32 *pixels = (COLOR32 *) calloc(width * height, sizeof(COLOR32));
 	textureRender(pixels, texels, palette, 1);
 
-	unsigned char header[] = {0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,
-		'N', 'N', 'S', '_', 'T', 'g', 'a', ' ', 'V', 'e', 'r', ' ', '1', '.', '0', 0, 0, 0, 0, 0};
+	unsigned char header[] = { 0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,
+		'N', 'N', 'S', '_', 'T', 'g', 'a', ' ', 'V', 'e', 'r', ' ', '1', '.', '0', 0, 0, 0, 0, 0 };
 	*(uint16_t *) (header + 0xC) = width;
 	*(uint16_t *) (header + 0xE) = height;
 	*(uint32_t *) (header + 0x22) = sizeof(header) + width * height * 4;
@@ -256,27 +260,27 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 		fwrite(palette->pal, nColors, 2, fp);
 	}
 
-	unsigned char gnam[] = {'n', 'n', 's', '_', 'g', 'n', 'a', 'm', 20, 0, 0, 0, 'p', 't', 'e', 'x', 'c', 'o', 'n', 'v'};
+	unsigned char gnam[] = { 'n', 'n', 's', '_', 'g', 'n', 'a', 'm', 20, 0, 0, 0, 'p', 't', 'e', 'x', 'c', 'o', 'n', 'v' };
 	fwrite(gnam, sizeof(gnam), 1, fp);
 
 	char version[16];
 	getVersion(version, 16);
-	unsigned char gver[] = {'n', 'n', 's', '_', 'g', 'v', 'e', 'r', 0, 0, 0, 0};
+	unsigned char gver[] = { 'n', 'n', 's', '_', 'g', 'v', 'e', 'r', 0, 0, 0, 0 };
 	*(uint32_t *) (gver + 8) = strlen(version) + 0xC;
 	fwrite(gver, sizeof(gver), 1, fp);
 	fwrite(version, strlen(version), 1, fp);
 
-	unsigned char imst[] = {'n', 'n', 's', '_', 'i', 'm', 's', 't', 0xC, 0, 0, 0};
+	unsigned char imst[] = { 'n', 'n', 's', '_', 'i', 'm', 's', 't', 0xC, 0, 0, 0 };
 	fwrite(imst, sizeof(imst), 1, fp);
 
 	//if c0xp
 	if (COL0TRANS(texels->texImageParam)) {
-		unsigned char c0xp[] = {'n', 'n', 's', '_', 'c', '0', 'x', 'p', 0xC, 0, 0, 0};
+		unsigned char c0xp[] = { 'n', 'n', 's', '_', 'c', '0', 'x', 'p', 0xC, 0, 0, 0 };
 		fwrite(c0xp, sizeof(c0xp), 1, fp);
 	}
 
 	//write end
-	unsigned char end[] = {'n', 'n', 's', '_', 'e', 'n', 'd', 'b', 0xC, 0, 0, 0};
+	unsigned char end[] = { 'n', 'n', 's', '_', 'e', 'n', 'd', 'b', 0xC, 0, 0, 0 };
 	fwrite(end, sizeof(end), 1, fp);
 
 	fclose(fp);
@@ -395,9 +399,9 @@ float mylog2(float d) { //UGLY!
 	float ans;
 	_asm {
 		fld1
-		fld dword ptr [d]
+		fld dword ptr[d]
 		fyl2x
-		fstp dword ptr [ans]
+		fstp dword ptr[ans]
 	}
 	return ans;
 }
@@ -407,22 +411,23 @@ float mylog2(float d) { //UGLY!
 
 //based on suggestions for color counts by SGC, interpolated with a log function
 int chooseColorCount(int bWidth, int bHeight) {
-	int colors = (int) (500.0f * (0.5f * log2f((float) bWidth * bHeight) - 5.0f) + 0.5f);
-	if (sqrt(bWidth * bHeight) < 83.0f) {
-		colors = (int) (8.69f * sqrt(bWidth * bHeight) - 33.02f);
+	int area = bWidth * bHeight;
+
+	//for textures smaller than 256x256, use 8*sqrt(area)
+	if (area < 256 * 256) {
+		int nColors = (int) (8 * sqrt((float) area));
+		nColors = (nColors + 15) & ~15;
+		return nColors;
 	}
 
-	//color count must be multiple of 8! Adjust here.
-	if (colors & 7) {
-		colors += 8 - (colors & 7);
-	}
-	return colors;
+	//larger sizes, increase by 256 every width/height increment
+	return (int) (256 * (log2f((float) area) - 10));
 }
 
 const char *getFileNameFromPath(const char *path) {
 	int lastIndex = -1;
 	for (unsigned int i = 0; i < strlen(path); i++) {
-		if(path[i] == '/' || path[i] == '\\') lastIndex = i;
+		if (path[i] == '/' || path[i] == '\\') lastIndex = i;
 	}
 	return path + lastIndex + 1;
 }
@@ -521,7 +526,7 @@ int _tmain(int argc, TCHAR **argv) {
 			nMaxChars = -1;
 		} else if (_tcscmp(arg, _T("-nx")) == 0) {
 			flipX = 0;
-		} else if(_tcscmp(arg, _T("-ny")) == 0){
+		} else if (_tcscmp(arg, _T("-ny")) == 0) {
 			flipY = 0;
 		} else if (_tcscmp(arg, _T("-ns")) == 0) {
 			outputScreen = 0;
@@ -618,8 +623,8 @@ int _tmain(int argc, TCHAR **argv) {
 			outputBinary = 0;
 		}
 
-		if(!silent) printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
-						   depth, nPalettes, nMaxColors, nMaxChars, diffuse, paletteBase);
+		if (!silent) printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
+			depth, nPalettes, nMaxColors, nMaxChars, diffuse, paletteBase);
 
 		COLOR *pal;
 		unsigned char *chars;
@@ -627,8 +632,8 @@ int _tmain(int argc, TCHAR **argv) {
 		int palSize, charSize, screenSize;
 		int p1, p1max, p2, p2max;
 		bgGenerate(px, width, height, depth, !!diffuse, diffuse / 100.0f, &pal, &chars, &screen, &palSize, &charSize, &screenSize,
-				   paletteBase, nPalettes, 0, 0, nMaxChars != -1, nMaxColors, 0, 0, nMaxChars, balance, colorBalance, enhanceColors,
-				   &p1, &p1max, &p2, &p2max);
+			paletteBase, nPalettes, 0, 0, nMaxChars != -1, nMaxColors, 0, 0, nMaxChars, balance, colorBalance, enhanceColors,
+			&p1, &p1max, &p2, &p2max);
 
 		if (outputBinary) {
 			//output NBFP, NBFC, NBFS.
@@ -704,7 +709,7 @@ int _tmain(int argc, TCHAR **argv) {
 			free(palette32);
 			free(indexBuffer);
 			free(nameBuffer);
-		} else  { //output header and source file
+		} else { //output header and source file
 
 				 //suffix the filename with .c, So reserve 3 characters+base length.
 			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 3, sizeof(TCHAR));
@@ -739,7 +744,7 @@ int _tmain(int argc, TCHAR **argv) {
 			//write
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
-					paletteBase, width, height);
+				paletteBase, width, height);
 			fprintf(fp, "#include <nds.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
 
 			//write character
@@ -783,7 +788,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//heading and declarations
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
-					paletteBase, width, height);
+				paletteBase, width, height);
 			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
 			fprintf(fp, "//\n// Generated character data\n//\n");
 			fprintf(fp, "extern const unsigned short %s%s_char[%d];\n\n", prefix, bgName, charSize / 2);
@@ -837,14 +842,14 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 		}
 
-		int colorMaxes[] = {0, 32, 4, 16, 256, 32768, 8, 0};
+		int colorMaxes[] = { 0, 32, 4, 16, 256, 32768, 8, 0 };
 		int bppArray[] = { 0, 8, 2, 4, 8, 2, 8, 16 };
 		if (nMaxColors > colorMaxes[format]) {
 			nMaxColors = colorMaxes[format];
-			if(!silent) printf("Color count truncated to %d.\n", nMaxColors);
+			if (!silent) printf("Color count truncated to %d.\n", nMaxColors);
 		}
-		if(!silent) printf("Generating texture\nMax colors: %d\nFormat: %d\nDiffuse: %d%%\nSize: %dx%d\n\n",
-						   nMaxColors, format, diffuse, width, height);
+		if (!silent) printf("Generating texture\nMax colors: %d\nFormat: %d\nDiffuse: %d%%\nSize: %dx%d\n\n",
+			nMaxColors, format, diffuse, width, height);
 
 		TEXTURE texture = { 0 };
 
@@ -879,7 +884,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			if (params.colorEntries > (size >> 1)) {
 				params.colorEntries = size >> 1;
-				if(!silent) printf("Color count truncated to %d.\n", params.colorEntries);
+				if (!silent) printf("Color count truncated to %d.\n", params.colorEntries);
 			}
 		}
 
@@ -898,7 +903,7 @@ int _tmain(int argc, TCHAR **argv) {
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			fwrite(texture.texels.texel, 1, texelSize, fp);
 			fclose(fp);
-			if(!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+			if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
 
 			//output palette if not direct
 			if (format != CT_DIRECT) {
@@ -906,7 +911,7 @@ int _tmain(int argc, TCHAR **argv) {
 				fp = _tfopen(nameBuffer, _T("wb"));
 				fwrite(texture.palette.pal, 2, texture.palette.nColors, fp);
 				fclose(fp);
-				if(!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+				if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
 			}
 
 			//output index if 4x4
@@ -915,7 +920,7 @@ int _tmain(int argc, TCHAR **argv) {
 				fp = _tfopen(nameBuffer, _T("wb"));
 				fwrite(texture.texels.cmp, 1, indexSize, fp);
 				fclose(fp);
-				if(!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+				if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
 			}
 
 			free(nameBuffer);
@@ -961,7 +966,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', stringFromFormat(format), texture.palette.nColors,
-					TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
+				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
 			fprintf(fp, "#include <nds.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
 
 			//write texel
@@ -1008,7 +1013,7 @@ int _tmain(int argc, TCHAR **argv) {
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
 			fp = _tfopen(nameBuffer, _T("wb"));
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', stringFromFormat(format), texture.palette.nColors,
-					TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
+				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
 			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
 			fprintf(fp, "//\n// Generated texel data\n//\n");
 			fprintf(fp, "extern const unsigned short %s%s_texel[%d];\n\n", prefix, texName, texelSize / 2);
