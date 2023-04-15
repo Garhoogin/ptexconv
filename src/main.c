@@ -38,7 +38,7 @@ long _ftol2_sse(float f) { //ugly hack
 }
 #endif
 
-#define VERSION "1.3.0.0"
+#define VERSION "1.3.0.1"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -61,8 +61,8 @@ const char *g_helpString = ""
 	"\n"
 	"BG Options:\n"
 	"   -b  <n> Specify output bit depth {4, 8}\n"
-	"   -p  <n> Use n palettes in output (Only valid for 4bpp)\n"
-	"   -pb <n> Use palette base index n (Only valid for 4bpp)\n"
+	"   -p  <n> Use n palettes in output\n"
+	"   -pb <n> Use palette base index n\n"
 	"   -cc <n> Compress characters to a maximum of n (default is 1024)\n"
 	"   -cn     No character compression\n"
 	"   -ns     Do not output screen data\n"
@@ -614,7 +614,6 @@ int _tmain(int argc, TCHAR **argv) {
 		if (nMaxColors == -1) nMaxColors = (depth == 4) ? 16 : 256;
 		if (depth == 4 && nMaxColors > 16) nMaxColors = 16;
 		if (depth == 8 && nMaxColors > 256) nMaxColors = 256;
-		if (depth == 8 && nPalettes != 1) nPalettes = 1;
 		if (nPalettes > 16) nPalettes = 16;
 
 		if (outputDib) {

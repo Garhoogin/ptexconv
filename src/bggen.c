@@ -472,20 +472,17 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	int *progress1, int *progress1Max, int *progress2, int *progress2Max) {
 
 	//cursory sanity checks
+	if (nPalettes < 1) nPalettes = 1;
+	else if (nPalettes > 16) nPalettes = 16;
 	if (nBits == 4) {
 		if (paletteBase >= 16) paletteBase = 15;
 		else if (paletteBase < 0) paletteBase = 0;
-		if (nPalettes > 16) nPalettes = 16;
-		else if (nPalettes < 1) nPalettes = 1;
 		if (paletteBase + nPalettes > 16) nPalettes = 16 - paletteBase;
 
 		if (paletteOffset < 0) paletteOffset = 0;
 		else if (paletteOffset >= 16) paletteOffset = 15;
 		if (paletteOffset + paletteSize > 16) paletteSize = 16 - paletteOffset;
 	} else {
-		paletteBase = 0;
-		nPalettes = 1;
-
 		if (paletteOffset < 0) paletteOffset = 0;
 		if (paletteSize < 1) paletteSize = 1;
 		if (paletteOffset >= 256) paletteOffset = 255;
@@ -493,6 +490,8 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 		if (paletteOffset + paletteSize > 256) paletteSize = 256 - paletteOffset;
 	}
 	if (paletteSize < 1) paletteSize = 1;
+	if (balance <= 0) balance = BALANCE_DEFAULT;
+	if (colorBalance <= 0) colorBalance = BALANCE_DEFAULT;
 
 	int tilesX = width / 8;
 	int tilesY = height / 8;
@@ -503,7 +502,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	*progress1Max = nTiles * 2; //2 passes
 	*progress2Max = 1000;
 
-	COLOR32 *palette = (COLOR32 *) calloc(256, 4);
+	COLOR32 *palette = (COLOR32 *) calloc(256 * 16, 4);
 	if (nBits < 5) nBits = 4;
 	else nBits = 8;
 	if (nPalettes == 1) {
@@ -592,10 +591,8 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 		modes[i] = tiles[i].flipMode;
 	}
 	unsigned char *paletteIndices = (unsigned char *) calloc(nTiles, 1);
-	if (nBits == 4) {
-		for (int i = 0; i < nTiles; i++) {
-			paletteIndices[i] = tiles[i].indices[0] >> 4;
-		}
+	for (int i = 0; i < nTiles; i++) {
+		paletteIndices[i] = tiles[i].palette;
 	}
 
 	*pOutPalette = (COLOR *) calloc(nPalettes << nBits, sizeof(COLOR));
