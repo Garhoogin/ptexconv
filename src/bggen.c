@@ -464,7 +464,7 @@ void setupBgTilesEx(BGTILE *tiles, int nTiles, int nBits, COLOR32 *palette, int 
 }
 
 void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, float diffuse,
-	COLOR **pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
+	COLOR *pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
 	int *outPalSize, int *outCharSize, int *outScreenSize,
 	int paletteBase, int nPalettes, int fmt, int tileBase, int mergeTiles,
 	int paletteSize, int paletteOffset, int rowLimit, int nMaxChars,
@@ -595,9 +595,12 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 		paletteIndices[i] = tiles[i].palette;
 	}
 
-	*pOutPalette = (COLOR *) calloc(nPalettes << nBits, sizeof(COLOR));
-	for (int i = 0; i < (nPalettes << nBits); i++) {
-		(*pOutPalette)[i] = ColorConvertToDS(palette[i]);
+	int outPaletteSize = nBits == 4 ? 256 : ((paletteBase + nPalettes) * 256);
+	for (int i = paletteBase; i < paletteBase + nPalettes; i++) {
+		for (int j = paletteOffset; j < paletteOffset + paletteSize; j++) {
+			int index = (i << nBits) + j;
+			pOutPalette[index] = ColorConvertToDS(palette[index]);
+		}
 	}
 	*pOutChars = (unsigned char *) calloc(nChars, nBits * 8);
 	for (int i = 0; i < nChars; i++) {
@@ -615,7 +618,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	for (int i = 0; i < tilesX * tilesY; i++) {
 		(*pOutScreen)[i] = indices[i] | (modes[i] << 10) | (paletteIndices[i] << 12);
 	}
-	*outPalSize = (nPalettes << nBits) * 2;
+	*outPalSize = outPaletteSize * sizeof(COLOR);
 	*outCharSize = nChars * nBits * 8;
 	*outScreenSize = tilesX * tilesY * 2;
 

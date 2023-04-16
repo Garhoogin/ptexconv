@@ -51,7 +51,7 @@ int performCharacterCompression(BGTILE *tiles, int nTiles, int nBits, int nMaxCh
 	int paletteBase, int paletteOffset, int balance, int colorBalance, int *progress);
 
 void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, float diffuse,
-	COLOR **pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
+	COLOR *pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
 	int *outPalSize, int *outCharSize, int *outScreenSize,
 	int palette, int nPalettes, int bin, int tileBase, int mergeTiles,
 	int paletteSize, int paletteOffsetm, int rowLimit, int nMaxChars,
