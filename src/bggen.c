@@ -14,6 +14,86 @@
 #define FALSE 0
 #define TRUE  1
 
+// For RGB - Indexed
+
+double calculatePaletteCharError(REDUCTION *reduction, COLOR32 *block, int *pals, unsigned char *character, int flip, double maxError) {
+	double error = 0;
+	for (int i = 0; i < 64; i++) { //0b111 111
+		int srcIndex = i;
+		if (flip & TILE_FLIPX) srcIndex ^= 7;
+		if (flip & TILE_FLIPY) srcIndex ^= 7 << 3;
+
+		//convert source image pixel
+		int yiq[4];
+		COLOR32 col = block[srcIndex];
+		rgbToYiq(col, yiq);
+
+		//char pixel
+		int index = character[i];
+		int *matchedYiq = pals + index * 4;
+		int matchedA = index > 0 ? 255 : 0;
+		if (matchedA == 0 && yiq[3] < 128) {
+			continue; //to prevent superfluous non-alpha difference
+		}
+
+		//diff
+		double dy = reduction->yWeight * (reduction->lumaTable[yiq[0]] - reduction->lumaTable[matchedYiq[0]]);
+		double di = reduction->iWeight * (yiq[1] - matchedYiq[1]);
+		double dq = reduction->qWeight * (yiq[2] - matchedYiq[2]);
+		double da = 40 * (yiq[3] - matchedA);
+
+
+		error += dy * dy;
+		if (da != 0.0) error += da * da;
+		if (error >= maxError) return maxError;
+		error += di * di + dq * dq;
+		if (error >= maxError) return maxError;
+	}
+	return error;
+}
+
+double calculateBestPaletteCharError(REDUCTION *reduction, COLOR32 *block, int *pals, unsigned char *character, int *flip, double maxError) {
+	double e00 = calculatePaletteCharError(reduction, block, pals, character, TILE_FLIPNONE, maxError);
+	if (e00 == 0) {
+		*flip = TILE_FLIPNONE;
+		return e00;
+	}
+	double e01 = calculatePaletteCharError(reduction, block, pals, character, TILE_FLIPX, maxError);
+	if (e01 == 0) {
+		*flip = TILE_FLIPX;
+		return e01;
+	}
+	double e10 = calculatePaletteCharError(reduction, block, pals, character, TILE_FLIPY, maxError);
+	if (e10 == 0) {
+		*flip = TILE_FLIPY;
+		return e10;
+	}
+	double e11 = calculatePaletteCharError(reduction, block, pals, character, TILE_FLIPXY, maxError);
+	if (e11 == 0) {
+		*flip = TILE_FLIPXY;
+		return e11;
+	}
+
+	if (e00 <= e01 && e00 <= e10 && e00 <= e11) {
+		*flip = TILE_FLIPNONE;
+		return e00;
+	}
+	if (e01 <= e00 && e01 <= e10 && e01 <= e11) {
+		*flip = TILE_FLIPX;
+		return e01;
+	}
+	if (e10 <= e00 && e10 <= e01 && e10 <= e11) {
+		*flip = TILE_FLIPY;
+		return e10;
+	}
+	*flip = TILE_FLIPXY;
+	return e11;
+}
+
+
+
+// For BGTILE - BGTILE calculation
+
 float tileDifferenceFlip(REDUCTION *reduction, BGTILE *t1, BGTILE *t2, unsigned char mode) {
 	double err = 0.0;
 	COLOR32 *px1 = t1->px;
@@ -627,4 +707,90 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	free(indices);
 	free(palette);
 	free(paletteIndices);
+}
+
+void bgAssemble(COLOR32 *imgBits, int width, int height, int nBits, COLOR *pals, int nPalettes,
+	unsigned char *chars, int nChars, unsigned short **pOutScreen, int *outScreenSize,
+	int balance, int colorBalance, int enhanceColors) {
+
+	int tilesX = width / 8;
+	int tilesY = height / 8;
+	int nTiles = tilesX * tilesY;
+	BGTILE *tiles = (BGTILE *) calloc(nTiles, sizeof(BGTILE));
+
+	//init params and convert palette
+	int *paletteYiq = (int *) calloc(nPalettes << nBits, 4 * sizeof(int));
+	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
+	initReduction(reduction, balance, colorBalance, 15, enhanceColors, (1 << nBits) - 1);
+	for (int i = 0; i < (nPalettes << nBits); i++) {
+		rgbToYiq(ColorConvertFromDS(pals[i]), paletteYiq + i * 4);
+	}
+
+	//split image into 8x8 tiles.
+	for (int y = 0; y < tilesY; y++) {
+		for (int x = 0; x < tilesX; x++) {
+			int srcOffset = x * 8 + y * 8 * (width);
+			COLOR32 *block = tiles[x + y * tilesX].px;
+
+			memcpy(block, imgBits + srcOffset, 32);
+			memcpy(block + 8, imgBits + srcOffset + width, 32);
+			memcpy(block + 16, imgBits + srcOffset + width * 2, 32);
+			memcpy(block + 24, imgBits + srcOffset + width * 3, 32);
+			memcpy(block + 32, imgBits + srcOffset + width * 4, 32);
+			memcpy(block + 40, imgBits + srcOffset + width * 5, 32);
+			memcpy(block + 48, imgBits + srcOffset + width * 6, 32);
+			memcpy(block + 56, imgBits + srcOffset + width * 7, 32);
+		}
+	}
+
+	//split input character to 8bpp
+	unsigned char *charBuf = (unsigned char *) calloc(nChars, 64);
+	if (nBits == 8) {
+		memcpy(charBuf, chars, nChars * 64);
+	} else {
+		for (int i = 0; i < nChars * 32; i++) {
+			charBuf[i * 2 + 0] = chars[i] & 0xF;
+			charBuf[i * 2 + 1] = chars[i] >> 4;
+		}
+	}
+
+	//construct output screen data.
+	unsigned short *screen = (unsigned short *) calloc(tilesX * tilesY, 2);
+	for (int y = 0; y < tilesY; y++) {
+		for (int x = 0; x < tilesX; x++) {
+			BGTILE *srcTile = tiles + (x + y * tilesX);
+			COLOR32 *block = srcTile->px;
+
+			//determine which input character (with which palette) best matches.
+			double maxError = 1e32;
+			int bestChar = 0, bestPalette = 0, bestFlip = 0;
+			for (int i = 0; i < nChars; i++) {
+				unsigned char *currentChar = charBuf + i * 64;
+
+				for (int j = 0; j < nPalettes; j++) {
+					int flipMode;
+					int *currentPal = paletteYiq + (j << nBits) * 4;
+					double err = calculateBestPaletteCharError(reduction, block, currentPal, currentChar, &flipMode, maxError);
+					if (err < maxError) {
+						maxError = err;
+						bestChar = i;
+						bestPalette = j;
+						bestFlip = flipMode;
+					}
+				}
+			}
+
+			//exhausted all permutations, write
+			screen[x + y * tilesX] = (bestChar & 0x3FF) | ((bestPalette & 0xF) << 12) | ((bestFlip & 0x3) << 10);
+		}
+	}
+
+	destroyReduction(reduction);
+	free(reduction);
+	free(tiles);
+	free(paletteYiq);
+	free(charBuf);
+
+	*pOutScreen = screen;
+	*outScreenSize = (tilesX * tilesY) * 2;
 }

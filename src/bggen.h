@@ -57,3 +57,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 	int paletteSize, int paletteOffsetm, int rowLimit, int nMaxChars,
 	int balance, int colorBalance, int enhanceColors,
 	int *progress1, int *progress1Max, int *progress2, int *progress2Max);
+
+void bgAssemble(COLOR32 *imgBits, int width, int height, int nBits, COLOR *pals, int nPalettes,
+	unsigned char *chars, int nChars, unsigned short **pOutScreen, int *outScreenSize,
+	int balance, int colorBalance, int enhanceColors);

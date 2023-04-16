@@ -38,7 +38,7 @@ long _ftol2_sse(float f) { //ugly hack
 }
 #endif
 
-#define VERSION "1.3.0.1"
+#define VERSION "1.4.0.0"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -68,15 +68,16 @@ const char *g_helpString = ""
 	"   -cb <n> Use character base index n\n"
 	"   -cc <n> Compress characters to a maximum of n (default is 1024)\n"
 	"   -cn     No character compression\n"
-	"   -wp <f> Overwrite an existing palette file (binary only)\n"
-	"   -wc <f> Append to an existing character file (binary only)\n"
+	"   -wp <f> Use or overwrite an existing palette file (binary only)\n"
+	"   -wc <f> Use or append to an existing character file (binary only)\n"
 	"   -ns     Do not output screen data\n"
+	"   -se     Output screen only. Requires -wp and -wc (will not modify).\n"
 	"   -od     Output as DIB (disables character compression)\n"
 	"\n"
 	"Texture Options:\n"
-	"   -f     Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
-	"   -ot    Output as NNS TGA\n"
-	"   -fp    Specify fixed palette file\n\n"
+	"   -f      Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
+	"   -ot     Output as NNS TGA\n"
+	"   -fp <f> Specify fixed palette file\n\n"
 "";
 
 const char *texHeader = ""
@@ -480,6 +481,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int outputScreen = 1;
 	int compressPalette = 0;  //Only output target palettes/colors?
 	int paletteOffset = 0;    //Offset from start of hw palette
+	int screenExclusive = 0;  //Output only screen file?
 	const TCHAR *srcPalFile = NULL; //palette file to overwrite
 	const TCHAR *srcChrFile = NULL; //character file to overwrite
 
@@ -553,6 +555,9 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-po")) == 0) {
 			i++;
 			if (i < argc) paletteOffset = _ttoi(argv[i]);
+		} else if (_tcscmp(arg, _T("-se")) == 0) {
+			screenExclusive = 1;
+			outputScreen = 1;
 		}
 
 		//Texture option
@@ -607,6 +612,10 @@ int _tmain(int argc, TCHAR **argv) {
 	}
 	if (mode == MODE_BG && ((depth == 4 && nMaxColors > 16) || (depth == 8 && nMaxColors > 256))) {
 		printf("Too many output colors specified: %d\n", nMaxColors);
+		return 1;
+	}
+	if (mode == MODE_BG && screenExclusive && (srcChrFile == NULL || srcPalFile == NULL)) {
+		puts("Palette and character file required for this.");
 		return 1;
 	}
 	if (mode == MODE_BG && outputTga) {
@@ -707,16 +716,24 @@ int _tmain(int argc, TCHAR **argv) {
 		if (!silent) printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
 			depth, nPalettes, nMaxColors, nMaxChars, diffuse, paletteBase);
 
-		unsigned char *chars;
-		unsigned short *screen;
-		int palSize, charSize, screenSize;
+		//perform appropriate generation of data.
+		unsigned char *chars = NULL;
+		unsigned short *screen = NULL;
+		int palSize = 0, charSize = 0, screenSize = 0;
 		int p1, p1max, p2, p2max;
-		bgGenerate(px, width, height, depth, !!diffuse, diffuse / 100.0f, pal, &chars, &screen, &palSize, &charSize, &screenSize,
-			paletteBase, nPalettes, 0, charBase, nMaxChars != -1, nMaxColors, paletteOffset, 0, nMaxChars, balance, colorBalance, enhanceColors,
-			&p1, &p1max, &p2, &p2max);
+		if (!screenExclusive) {
+			//from scratch
+			bgGenerate(px, width, height, depth, !!diffuse, diffuse / 100.0f, pal, &chars, &screen, &palSize, &charSize, &screenSize,
+				paletteBase, nPalettes, 0, charBase, nMaxChars != -1, nMaxColors, paletteOffset, 0, nMaxChars, balance, colorBalance, enhanceColors,
+				&p1, &p1max, &p2, &p2max);
+		} else {
+			//from existing palette+char
+			bgAssemble(px, width, height, depth, pal, nPalettes, existingChars, existingCharsSize / (8 * depth),
+				&screen, &screenSize, balance, colorBalance, enhanceColors);
+		}
 
 		//prep data out for character
-		if (existingChars != NULL) {
+		if (!screenExclusive && existingChars != NULL) {
 			//consider the existing character and the generated ones. 
 			int requiredCharSize = charSize + charBase * (8 * depth);
 			if (requiredCharSize < existingCharsSize) requiredCharSize = existingCharsSize;
@@ -734,20 +751,23 @@ int _tmain(int argc, TCHAR **argv) {
 			//output NBFP, NBFC, NBFS.
 
 			//suffix the filename with .nbfp, .nbfc, .nbfs. So reserve 6 characters+base length.
+			FILE *fp;
 			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 6, sizeof(TCHAR));
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
 			memcpy(nameBuffer + baseLength, _T(".nbfp"), 6 * sizeof(TCHAR));
 
-			FILE *fp = _tfopen(srcPalFile == NULL ? nameBuffer : srcPalFile, _T("wb"));
-			fwrite(pal + paletteOutBase, sizeof(COLOR), paletteOutSize, fp);
-			fclose(fp);
-			if (!silent) _tprintf(_T("Wrote %s\n"), srcPalFile == NULL ? nameBuffer : srcPalFile);
+			if (!screenExclusive) {
+				fp = _tfopen(srcPalFile == NULL ? nameBuffer : srcPalFile, _T("wb"));
+				fwrite(pal + paletteOutBase, sizeof(COLOR), paletteOutSize, fp);
+				fclose(fp);
+				if (!silent) _tprintf(_T("Wrote %s\n"), srcPalFile == NULL ? nameBuffer : srcPalFile);
 
-			memcpy(nameBuffer + baseLength, _T(".nbfc"), 6 * sizeof(TCHAR));
-			fp = _tfopen(srcChrFile == NULL ? nameBuffer : srcChrFile, _T("wb"));
-			fwrite(chars, charSize, 1, fp);
-			fclose(fp);
-			if (!silent) _tprintf(_T("Wrote %s\n"), srcChrFile == NULL ? nameBuffer : srcChrFile);
+				memcpy(nameBuffer + baseLength, _T(".nbfc"), 6 * sizeof(TCHAR));
+				fp = _tfopen(srcChrFile == NULL ? nameBuffer : srcChrFile, _T("wb"));
+				fwrite(chars, charSize, 1, fp);
+				fclose(fp);
+				if (!silent) _tprintf(_T("Wrote %s\n"), srcChrFile == NULL ? nameBuffer : srcChrFile);
+			}
 
 			if (outputScreen) {
 				memcpy(nameBuffer + baseLength, _T(".nbfs"), 6 * sizeof(TCHAR));
@@ -842,26 +862,28 @@ int _tmain(int argc, TCHAR **argv) {
 				paletteBase, width, height);
 			fprintf(fp, "#include <nds.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
 
-			//write character
-			{
-				fprintf(fp, "const unsigned short %s%s_char[] = {\n    ", prefix, bgName);
-				unsigned short *schars = (unsigned short *) chars;
-				int nShort = charSize >> 1;
-				for (int i = 0; i < nShort; i++) {
-					fprintf(fp, "0x%04x,%c", schars[i], (i + 1) % 16 == 0 ? '\n' : ' ');
-					if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
+			if (!screenExclusive) {
+				//write character
+				{
+					fprintf(fp, "const unsigned short %s%s_char[] = {\n    ", prefix, bgName);
+					unsigned short *schars = (unsigned short *) chars;
+					int nShort = charSize >> 1;
+					for (int i = 0; i < nShort; i++) {
+						fprintf(fp, "0x%04x,%c", schars[i], (i + 1) % 16 == 0 ? '\n' : ' ');
+						if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
+					}
+					fprintf(fp, "};\n\n");
 				}
-				fprintf(fp, "};\n\n");
-			}
 
-			//write palette
-			{
-				fprintf(fp, "const unsigned short %s%s_pal[] = {\n    ", prefix, bgName);
-				for (int i = 0; i < paletteOutSize; i++) {
-					fprintf(fp, "0x%04x,%c", pal[i + paletteOutBase], (i + 1) % 16 == 0 ? '\n' : ' ');
-					if (((i + 1) % 16) == 0 && (i < paletteOutSize - 1)) fprintf(fp, "    ");
+				//write palette
+				{
+					fprintf(fp, "const unsigned short %s%s_pal[] = {\n    ", prefix, bgName);
+					for (int i = 0; i < paletteOutSize; i++) {
+						fprintf(fp, "0x%04x,%c", pal[i + paletteOutBase], (i + 1) % 16 == 0 ? '\n' : ' ');
+						if (((i + 1) % 16) == 0 && (i < paletteOutSize - 1)) fprintf(fp, "    ");
+					}
+					fprintf(fp, "};\n\n");
 				}
-				fprintf(fp, "};\n\n");
 			}
 
 			if (outputScreen) {
@@ -897,9 +919,9 @@ int _tmain(int argc, TCHAR **argv) {
 			free(bgName);
 		}
 
-		free(pal);
-		free(chars);
-		free(screen);
+		if (pal != NULL) free(pal);
+		if (chars != NULL) free(chars);
+		if (screen != NULL) free(screen);
 	} else {
 		//Generate Texture
 		//fix up automatic flags
