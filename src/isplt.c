@@ -4,9 +4,8 @@
 
 #include "color.h"
 #include "palette.h"
-#include "analysis.h"
 
-#ifndef _WIN32
+#ifndef _MSC_VER
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
 #	define __inline

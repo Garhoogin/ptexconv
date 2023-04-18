@@ -1,13 +1,12 @@
 #include "palette.h"
 #include "color.h"
 #include "texconv.h"
-#include "analysis.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef _WIN32
+#ifndef _MSC_VER
 #	define min(a,b) ((a)<(b)?(a):(b))
 #	define max(a,b) ((a)>(b)?(a):(b))
 #endif

@@ -1,5 +1,4 @@
 #include "palette.h"
-#include "analysis.h"
 
 #include <math.h>
 #include <string.h>

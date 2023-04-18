@@ -8,9 +8,9 @@
 #include "palette.h"
 #include "bggen.h"
 
+//ensure TCHAR and related macros are defined
 #ifdef _WIN32
 #   include <tchar.h>
-#   include "gdip.h"
 #else
 #   define TCHAR char
 #   define _T(x) x
@@ -20,7 +20,23 @@
 #   define _tprintf printf
 #   define _tcslen strlen
 #   define _ttoi atoi
+#endif
 
+//MinGW's wprintf is defective. Account for this here.
+#ifdef _MSC_VER
+#   define TC_STR _T("%s")
+#else //_MSC_VER
+#ifdef _UNICODE
+#   define TC_STR _T("%ls")
+#else //_UNICODE
+#   define TC_STR _T("%s")
+#endif
+#endif //_MSC_VER
+
+//make sure we have an image I/O provider
+#ifdef _MSC_VER
+#   include "gdip.h"
+#else
 #   define STB_IMAGE_IMPLEMENTATION
 #   include "stb_image.h"
 #endif
@@ -30,7 +46,7 @@
 
 int _fltused;
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 extern long _ftol(double d);
 
 long _ftol2_sse(float f) { //ugly hack
@@ -38,7 +54,19 @@ long _ftol2_sse(float f) { //ugly hack
 }
 #endif
 
-#define VERSION "1.4.0.0"
+//BG file suffixes
+#define NBFX_EXTLEN    8 /* _xxx.bin */
+#define NBFP_EXTENSION _T("_pal.bin")
+#define NBFC_EXTENSION _T("_chr.bin")
+#define NBFS_EXTENSION _T("_scr.bin")
+
+//Texture file suffixes
+#define NTFX_EXTLEN    8 /* _xxx.bin */
+#define NTFP_EXTENSION _T("_pal.bin")
+#define NTFT_EXTENSION _T("_tex.bin")
+#define NTFI_EXTENSION _T("_idx.bin")
+
+#define VERSION "1.4.0.1"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -107,7 +135,7 @@ const char *bgHeader = ""
 
 void getDate(int *month, int *day, int *year, int *hour, int *minute, int *am) {
 
-#ifndef _WIN32
+#ifndef _MSC_VER
 	time_t tm = time(NULL);
 	struct tm *local = localtime(&tm);
 
@@ -132,7 +160,7 @@ void printHelp() {
 
 COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHeight) {
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 
 #ifdef _UNICODE
 	return gdipReadImage(lpszFileName, pWidth, pHeight);
@@ -144,9 +172,13 @@ COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHeight) {
 	return gdipReadImage(buffer, pWidth, pHeight);
 #endif
 
-#else //_WIN32
+#else //_MSC_VER
 	int channels;
-	return (COLOR32 *) stbi_load(lpszFileName, pWidth, pHeight, &channels, 4);
+	FILE *fp = _tfopen(lpszFileName, _T("rb"));
+	COLOR32 *px = (COLOR32 *) stbi_load_from_file(fp, pWidth, pHeight, &channels, 4);
+	fclose(fp);
+
+	return px;
 #endif
 
 }
@@ -399,7 +431,7 @@ void writeBitmap(COLOR32 *palette, int paletteSize, int *indices, int width, int
 	free(paletteData);
 }
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 
 float mylog2(float d) { //UGLY!
 	float ans;
@@ -578,7 +610,7 @@ int _tmain(int argc, TCHAR **argv) {
 					//maybe a format number
 					int fid = _ttoi(fmtString);
 					if (fid >= 1 && fid <= 7) format = fid;
-					else _tprintf(_T("Unknown texture format %s.\n"), fmtString);
+					else _tprintf(_T("Unknown texture format ") TC_STR _T(".\n"), fmtString);
 				}
 			}
 		} else if (_tcscmp(arg, _T("-ot")) == 0) {
@@ -589,7 +621,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 		//unknown switch
 		else {
-			_tprintf(_T("Ignoring unknown switch %s.\n"), arg);
+			_tprintf(_T("Ignoring unknown switch ") TC_STR _T(".\n"), arg);
 		}
 	}
 
@@ -636,6 +668,10 @@ int _tmain(int argc, TCHAR **argv) {
 
 	int width, height;
 	COLOR32 *px = tgdipReadImage(srcImage, &width, &height);
+	if (px == NULL) {
+		puts("Could not read image file.");
+		return 1;
+	}
 
 	if (mode == MODE_BG) {
 		//Generate BG
@@ -752,34 +788,39 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//suffix the filename with .nbfp, .nbfc, .nbfs. So reserve 6 characters+base length.
 			FILE *fp;
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 6, sizeof(TCHAR));
+			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + NBFX_EXTLEN + 1, sizeof(TCHAR));
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".nbfp"), 6 * sizeof(TCHAR));
+			memcpy(nameBuffer + baseLength, NBFP_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
 
 			if (!screenExclusive) {
 				fp = _tfopen(srcPalFile == NULL ? nameBuffer : srcPalFile, _T("wb"));
 				fwrite(pal + paletteOutBase, sizeof(COLOR), paletteOutSize, fp);
 				fclose(fp);
-				if (!silent) _tprintf(_T("Wrote %s\n"), srcPalFile == NULL ? nameBuffer : srcPalFile);
+				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), srcPalFile == NULL ? nameBuffer : srcPalFile);
 
-				memcpy(nameBuffer + baseLength, _T(".nbfc"), 6 * sizeof(TCHAR));
+				memcpy(nameBuffer + baseLength, NBFC_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(srcChrFile == NULL ? nameBuffer : srcChrFile, _T("wb"));
 				fwrite(chars, charSize, 1, fp);
 				fclose(fp);
-				if (!silent) _tprintf(_T("Wrote %s\n"), srcChrFile == NULL ? nameBuffer : srcChrFile);
+				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), srcChrFile == NULL ? nameBuffer : srcChrFile);
 			}
 
 			if (outputScreen) {
-				memcpy(nameBuffer + baseLength, _T(".nbfs"), 6 * sizeof(TCHAR));
+				memcpy(nameBuffer + baseLength, NBFS_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
 				fwrite(screen, screenSize, 1, fp);
 				fclose(fp);
-				if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			}
 
 			free(nameBuffer);
 
 		} else if (outputDib) { //output DIB file
+			//we physically cannot cram this many colors into a DIB palette
+			if (depth == 8 && nPalettes > 1) {
+				puts("DIB output for EXT BGs not supported.");
+				return 1;
+			}
 
 			//suffix filename with .bmp, reserve 5 characters+base length
 			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 5, sizeof(TCHAR));
@@ -807,7 +848,7 @@ int _tmain(int argc, TCHAR **argv) {
 								else indexValue >>= 4;
 								indexValue |= (palIndex << 4);
 							}
-							indexBuffer[cx * 8 + x + (cy * 8 + y) * outHeight] = indexValue;
+							indexBuffer[cx * 8 + x + (cy * 8 + y) * outWidth] = indexValue;
 						}
 					}
 				}
@@ -819,7 +860,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 			writeBitmap(palette32, palSize / 2, indexBuffer, width, height, nameBuffer);
 
-			if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
 			free(palette32);
 			free(indexBuffer);
@@ -1011,32 +1052,32 @@ int _tmain(int argc, TCHAR **argv) {
 		//if binary, output as NTFT, NTFI, NTFP.
 		if (outputBinary) {
 			//suffix the filename with .ntft, .nfti, .nftp. So reserve 6 characters+base length.
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 6, sizeof(TCHAR));
+			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + NTFX_EXTLEN + 1, sizeof(TCHAR));
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".ntft"), 6 * sizeof(TCHAR));
+			memcpy(nameBuffer + baseLength, NTFT_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 
 			//output texel always
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			fwrite(texture.texels.texel, 1, texelSize, fp);
 			fclose(fp);
-			if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
 			//output palette if not direct
 			if (format != CT_DIRECT) {
-				memcpy(nameBuffer + baseLength, _T(".ntfp"), 6 * sizeof(TCHAR));
+				memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
 				fwrite(texture.palette.pal, 2, texture.palette.nColors, fp);
 				fclose(fp);
-				if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			}
 
 			//output index if 4x4
 			if (format == CT_4x4) {
-				memcpy(nameBuffer + baseLength, _T(".ntfi"), 6 * sizeof(TCHAR));
+				memcpy(nameBuffer + baseLength, NTFI_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
 				fwrite(texture.texels.cmp, 1, indexSize, fp);
 				fclose(fp);
-				if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			}
 
 			free(nameBuffer);
@@ -1047,6 +1088,7 @@ int _tmain(int argc, TCHAR **argv) {
 			memcpy(nameBuffer + baseLength, _T(".tga"), 5 * sizeof(TCHAR));
 
 			writeNitroTGA(nameBuffer, &texture.texels, &texture.palette);
+			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			free(nameBuffer);
 		} else {
 
@@ -1123,7 +1165,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 			fclose(fp);
 
-			if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
 			//write header
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
@@ -1143,7 +1185,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 			fclose(fp);
 
-			if (!silent) _tprintf(_T("Wrote %s\n"), nameBuffer);
+			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			free(texName);
 			free(nameBuffer);
 			if (params.fixedPalette != NULL) free(params.fixedPalette);
@@ -1154,7 +1196,7 @@ int _tmain(int argc, TCHAR **argv) {
 	return 0;
 }
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 
 extern int __getmainargs(int *_Argc, char ***_Argv, char ***_Env, int _DoWildCard, int *_StartInfo);
 extern int __wgetmainargs(int *_Argc, wchar_t ***_Argv, wchar_t ***_Env, int _DoWildCard, int *_StartInfo);

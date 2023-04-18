@@ -1,7 +1,7 @@
 #include "gdip.h"
 #include "texture.h"
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 #include <Windows.h>
 
 static int startup = 0;
