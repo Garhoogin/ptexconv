@@ -66,7 +66,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.4.0.1"
+#define VERSION "1.4.0.2"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -232,7 +232,7 @@ int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
 	return fmt;
 }
 
-char *getVersion() {
+const char *getVersion(void) {
 	return VERSION;
 }
 
@@ -301,8 +301,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	unsigned char gnam[] = { 'n', 'n', 's', '_', 'g', 'n', 'a', 'm', 20, 0, 0, 0, 'p', 't', 'e', 'x', 'c', 'o', 'n', 'v' };
 	fwrite(gnam, sizeof(gnam), 1, fp);
 
-	char version[16];
-	getVersion(version, 16);
+	const char *version = getVersion();
 	unsigned char gver[] = { 'n', 'n', 's', '_', 'g', 'v', 'e', 'r', 0, 0, 0, 0 };
 	*(uint32_t *) (gver + 8) = strlen(version) + 0xC;
 	fwrite(gver, sizeof(gver), 1, fp);
