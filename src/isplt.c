@@ -1259,7 +1259,9 @@ double computeHistogramPaletteError(REDUCTION *reduction, COLOR32 *palette, int 
 }
 
 int findClosestPaletteColor(REDUCTION *reduction, int *palette, int nColors, int *col, int *outDiff) {
+	(void) reduction;
 	int rgb[4];
+	
 	yiqToRgb(rgb, col);
 	return findClosestPaletteColorRGB(palette, nColors, rgb[0] | (rgb[1] << 8) | (rgb[2] << 16), outDiff);
 }

@@ -310,7 +310,7 @@ double testBlockStep(REDUCTION *reduction, COLOR32 *px, int nPx, int transparent
 void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) {
 	//if only 1 or 2 colors, fill the palette with those.
 
-	COLOR32 colors[2];
+	COLOR32 colors[2] = { 0 };
 	int nColors = 0;
 	int transparent = 0;
 	for (int i = 0; i < nPx; i++) {

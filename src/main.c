@@ -760,7 +760,7 @@ int _tmain(int argc, TCHAR **argv) {
 		if (!screenExclusive) {
 			//from scratch
 			bgGenerate(px, width, height, depth, !!diffuse, diffuse / 100.0f, pal, &chars, &screen, &palSize, &charSize, &screenSize,
-				paletteBase, nPalettes, 0, charBase, nMaxChars != -1, nMaxColors, paletteOffset, 0, nMaxChars, balance, colorBalance, enhanceColors,
+				paletteBase, nPalettes, charBase, nMaxChars != -1, nMaxColors, paletteOffset, 0, nMaxChars, balance, colorBalance, enhanceColors,
 				&p1, &p1max, &p2, &p2max);
 		} else {
 			//from existing palette+char

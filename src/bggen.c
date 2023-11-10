@@ -545,10 +545,12 @@ void setupBgTilesEx(BGTILE *tiles, int nTiles, int nBits, COLOR32 *palette, int 
 void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, float diffuse,
 	COLOR *pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen,
 	int *outPalSize, int *outCharSize, int *outScreenSize,
-	int paletteBase, int nPalettes, int fmt, int tileBase, int mergeTiles,
+	int paletteBase, int nPalettes, int tileBase, int mergeTiles,
 	int paletteSize, int paletteOffset, int rowLimit, int nMaxChars,
 	int balance, int colorBalance, int enhanceColors,
 	int *progress1, int *progress1Max, int *progress2, int *progress2Max) {
+
+	(void) rowLimit; //yet unimplemented here
 
 	//cursory sanity checks
 	if (nPalettes < 1) nPalettes = 1;
