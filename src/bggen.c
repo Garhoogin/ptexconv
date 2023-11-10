@@ -96,7 +96,6 @@ double calculateBestPaletteCharError(REDUCTION *reduction, COLOR32 *block, int *
 
 float tileDifferenceFlip(REDUCTION *reduction, BGTILE *t1, BGTILE *t2, unsigned char mode) {
 	double err = 0.0;
-	COLOR32 *px1 = t1->px;
 	double yw2 = reduction->yWeight * reduction->yWeight;
 	double iw2 = reduction->iWeight * reduction->iWeight;
 	double qw2 = reduction->qWeight * reduction->qWeight;
@@ -626,7 +625,7 @@ void bgGenerate(COLOR32 *imgBits, int width, int height, int nBits, int dither, 
 			paletteOffset, balance, colorBalance, progress2);
 	}
 
-	COLOR32 *blocks = (COLOR32 *) calloc(64 * nChars, sizeof(COLOR32));
+	COLOR32 *blocks = (COLOR32 *) calloc(nChars, 64 * sizeof(COLOR32));
 	int writeIndex = 0;
 	for (int i = 0; i < nTiles; i++) {
 		if (tiles[i].masterTile != i) continue;

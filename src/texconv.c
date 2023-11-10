@@ -29,7 +29,7 @@ int textureConvertDirect(CREATEPARAMS *params) {
 	params->dest->palette.pal = NULL;
 	params->dest->palette.nColors = 0;
 	COLOR *txel = (COLOR *) calloc(width * height, 2);
-	params->dest->texels.texel = (char *) txel;
+	params->dest->texels.texel = (unsigned char *) txel;
 	for (int i = 0; i < width * height; i++) {
 		COLOR32 p = px[i];
 		COLOR c = ColorConvertToDS(p);
@@ -933,8 +933,8 @@ int textureConvert4x4(CREATEPARAMS *params) {
 	memcpy(params->dest->palette.name, params->pnam, 16);
 	if (params->dest->texels.cmp) free(params->dest->texels.cmp);
 	if (params->dest->texels.texel) free(params->dest->texels.texel);
-	params->dest->texels.cmp = (short *) pidx;
-	params->dest->texels.texel = (char *) txel;
+	params->dest->texels.cmp = (unsigned short *) pidx;
+	params->dest->texels.texel = (unsigned char *) txel;
 	params->dest->texels.texImageParam = (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23) | (params->fmt << 26);
 
 	free(tileData);

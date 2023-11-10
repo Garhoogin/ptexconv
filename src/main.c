@@ -332,7 +332,6 @@ unsigned char *createBitmapData(int *indices, int width, int height, int depth, 
 	*dataSize = imageSize;
 
 	int posShift = (depth == 4) ? 1 : 0;
-	int idxShift = (depth == 4) ? 4 : 0;
 
 	unsigned char *data = (unsigned char *) calloc(imageSize, 1);
 	for (int y = 0; y < height; y++) {
@@ -740,11 +739,13 @@ int _tmain(int argc, TCHAR **argv) {
 			fseek(chrFp, 0, SEEK_SET);
 
 			//set character offset based on file size and current bit depth
+			size_t nRead;
 			int nExistingChars = (fSize + 8 * depth - 1) / (8 * depth); //round up
 			existingCharsSize = nExistingChars * (8 * depth);
 			if (!explicitCharBase) charBase = nExistingChars;
 			existingChars = calloc(existingCharsSize, 1);
-			(void) fread(existingChars, fSize, 1, chrFp);
+			nRead = fread(existingChars, fSize, 1, chrFp);
+			(void) nRead;
 			fclose(chrFp);
 		}
 
@@ -1030,12 +1031,14 @@ int _tmain(int argc, TCHAR **argv) {
 		memset(params.pnam, 0, sizeof(params.pnam));
 
 		if (fixedPalette != NULL) {
+			size_t nRead;
 			FILE *fp = _tfopen(fixedPalette, _T("rb"));
 			fseek(fp, 0, SEEK_END);
 			int size = ftell(fp);
 			fseek(fp, 0, SEEK_SET);
 			params.fixedPalette = (COLOR *) malloc(size);
-			(void) fread(params.fixedPalette, 2, size >> 1, fp);
+			nRead = fread(params.fixedPalette, 2, size >> 1, fp);
+			(void) nRead;
 			fclose(fp);
 
 			if (params.colorEntries > (size >> 1)) {

@@ -1273,7 +1273,7 @@ int computeTilePaletteDifference(REDUCTION *reduction, TILE *tile1, TILE *tile2)
 	for (int i = 0; i < tile2->nUsedColors; i++) {
 		int *yiq = &tile2->palette[i][0];
 		int diff = 0;
-		int closest = findClosestPaletteColor(reduction, &tile1->palette[0][0], tile1->nUsedColors, yiq, &diff);
+		findClosestPaletteColor(reduction, &tile1->palette[0][0], tile1->nUsedColors, yiq, &diff);
 
 		if (diff > 0) {
 			totalDiff += sqrt(diff) * tile2->useCounts[i];
@@ -1427,7 +1427,7 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 	while (nCurrentPalettes > nPalettes) {
 
 		int index1, index2;
-		int diff = findSimilarTiles(tiles, diffBuff, nTiles, &index1, &index2);
+		findSimilarTiles(tiles, diffBuff, nTiles, &index1, &index2);
 
 		//find all  instances of index2, replace with index1
 		int nSwitched = 0;
@@ -1450,12 +1450,10 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 
 		//write over the palette of the tile
 		TILE *palTile = tiles + index1;
-		COLOR32 palBuf[16];
 		for (int i = 0; i < 15; i++) {
 			int *yiqDest = &palTile->palette[i][0];
 			uint8_t *srcRgb = &reduction->paletteRgb[i][0];
 			COLOR32 rgb = srcRgb[0] | (srcRgb[1] << 8) | (srcRgb[2] << 16);
-			palBuf[i] = rgb;
 			rgbToYiq(rgb, yiqDest);
 		}
 		palTile->nUsedColors = reduction->nUsedColors;
@@ -1495,7 +1493,6 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 	int nPalettesWritten = 0;
 	int outputOffs = max(paletteOffset, 1);
 	COLOR32 palettes[16 * 16] = { 0 };
-	int paletteIndices[16] = { 0 };
 	reduction->maskColors = TRUE;
 	for (int i = 0; i < nTiles; i++) {
 		TILE *t = tiles + i;
@@ -1515,7 +1512,6 @@ void createMultiplePalettesEx(COLOR32 *imgBits, int tilesX, int tilesY, COLOR32 
 			uint8_t *rgb = &reduction->paletteRgb[j][0];
 			palettes[j + nPalettesWritten * 16] = ColorRoundToDS15(rgb[0] | (rgb[1] << 8) | (rgb[2] << 16));
 		}
-		paletteIndices[nPalettesWritten] = i;
 		nPalettesWritten++;
 		(*progress)++;
 	}
