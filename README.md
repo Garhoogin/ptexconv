@@ -61,3 +61,25 @@ Lastly, to do BG color reduction but output as a standard BMP file, use the `-od
 
 ## Texture Conversion Options
 Texture conversion has a couple switches of its own. Use `-f` followed by a format name (or number) to select a texture format to use. Use the `-fp` option followed by a path to a (raw) palette file to instruct the program to use this palette file when generating texture data. Lastly, the `-ot` option tells ptexconv to output a file as an NNS TGA file (for use with NNS plugins).
+
+## Usage Examples
+**Example 1**: creating a background using 4 16-color palettes: 
+```
+ptexconv -gb -b 4 -p 4 background.png -o background
+```
+
+**Example 2**: creating two backgrounds that use the same graphics space, with one image getting the first 8 palettes, and the other getting the 9th palette, allotting up to 512 characters of graphics to each:
+```
+ptexconv -gb -b 4 -p 8 main_bg.png -cc 512 -o background
+ptexconv -gb -b 4 -pb 8 bg2.png -cc 512 -wp background_pal.bin -wc background_chr.bin -o bg2
+```
+
+**Example 3**: creating an extended palette background using 4 palettes starting at palette index 2, but only output the portion of the palette that should be loaded (palette that can be loaded directly to extended palette slot 2, rather than the start of the palette memory):
+```
+ptexconv -gb -b 8 -p 4 -pb 2 -pc background.png -o background
+```
+
+**Example 4**: using an existing 4bpp tileset with 12 palettes to construct a background:
+```
+ptexconv -gb -b 4 -p 12 image.png -wp tileset_pal.bin -wc tileset_chr.bin -se -o bg_constructed
+```
