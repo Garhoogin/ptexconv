@@ -66,7 +66,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.4.0.2"
+#define VERSION "1.4.1.0"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -201,7 +201,7 @@ int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
 	//is there translucency?
 	if (isTranslucent(px, nWidth, nHeight)) {
 		//then choose a3i5 or a5i3. Do this by using color count.
-		int colorCount = countColors(px, nWidth * nHeight);
+		int colorCount = ImgCountColors(px, nWidth * nHeight);
 		if (colorCount < 16) {
 			//colors < 16, choose a5i3.
 			fmt = CT_A5I3;
@@ -211,7 +211,7 @@ int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
 		}
 	} else {
 		//weigh the other format options for optimal size.
-		int nColors = countColors(px, nWidth * nHeight);
+		int nColors = ImgCountColors(px, nWidth * nHeight);
 
 		//if <= 4 colors, choose 4-color.
 		if (nColors <= 4) {
@@ -253,7 +253,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	int width = TEXW(texels->texImageParam);
 	int height = TEXH(texels->texImageParam);
 	COLOR32 *pixels = (COLOR32 *) calloc(width * height, sizeof(COLOR32));
-	textureRender(pixels, texels, palette, 1);
+	TxRender(pixels, width, height, texels, palette, 1);
 
 	unsigned char header[] = { 0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,
 		'N', 'N', 'S', '_', 'T', 'g', 'a', ' ', 'V', 'e', 'r', ' ', '1', '.', '0', 0, 0, 0, 0, 0 };
@@ -263,7 +263,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	fwrite(header, sizeof(header), 1, fp);
 	fwrite(pixels, width * height * 4, 1, fp);
 
-	char *fstr = stringFromFormat(FORMAT(texels->texImageParam));
+	const char *fstr = TxNameFromTexFormat(FORMAT(texels->texImageParam));
 	fwrite("nns_frmt", 8, 1, fp);
 	uint32_t flen = strlen(fstr) + 0xC;
 	fwrite(&flen, 4, 1, fp);
@@ -271,7 +271,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 
 	//texels
 	fwrite("nns_txel", 8, 1, fp);
-	uint32_t txelLength = getTexelSize(width, height, texels->texImageParam) + 0xC;
+	uint32_t txelLength = TxGetTexelSize(width, height, texels->texImageParam) + 0xC;
 	fwrite(&txelLength, 4, 1, fp);
 	fwrite(texels->texel, txelLength - 0xC, 1, fp);
 
@@ -759,12 +759,29 @@ int _tmain(int argc, TCHAR **argv) {
 		int p1, p1max, p2, p2max;
 		if (!screenExclusive) {
 			//from scratch
-			bgGenerate(px, width, height, depth, !!diffuse, diffuse / 100.0f, pal, &chars, &screen, &palSize, &charSize, &screenSize,
-				paletteBase, nPalettes, charBase, nMaxChars != -1, nMaxColors, paletteOffset, 0, nMaxChars, balance, colorBalance, enhanceColors,
-				&p1, &p1max, &p2, &p2max);
+			BgGenerateParameters params = { 0 };
+			params.balance.balance = balance;
+			params.balance.colorBalance = colorBalance;
+			params.balance.enhanceColors = enhanceColors;
+
+			params.compressPalette = compressPalette;
+			params.paletteRegion.base = paletteBase;
+			params.paletteRegion.count = nPalettes;
+			params.paletteRegion.length = nMaxColors;
+			params.paletteRegion.offset = paletteOffset;
+
+			params.nBits = depth;
+			params.dither.dither = (diffuse != 0);
+			params.dither.diffuse = ((float) diffuse) / 100.0f;
+			params.characterSetting.base = charBase;
+			params.characterSetting.compress = (nMaxChars != -1);
+			params.characterSetting.nMax = nMaxChars;
+			params.characterSetting.alignment = 1;
+			BgGenerate(pal, &chars, &screen, &palSize, &charSize, &screenSize, px, width, height,
+				&params, &p1, &p1max, &p2, &p2max);
 		} else {
 			//from existing palette+char
-			bgAssemble(px, width, height, depth, pal, nPalettes, existingChars, existingCharsSize / (8 * depth),
+			BgAssemble(px, width, height, depth, pal, nPalettes, existingChars, existingCharsSize / (8 * depth),
 				&screen, &screenSize, balance, colorBalance, enhanceColors);
 		}
 
@@ -1010,7 +1027,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 		TEXTURE texture = { 0 };
 
-		CREATEPARAMS params;
+		TxConversionParameters params;
 		params.callback = NULL;
 		params.callbackParam = NULL;
 		params.colorEntries = nMaxColors;
@@ -1047,7 +1064,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 		}
 
-		textureConvert(&params);
+		TxConvert(&params);
 		int texelSize = TEXW(texture.texels.texImageParam) * TEXH(texture.texels.texImageParam) * bppArray[format] / 8;
 		int indexSize = (format == CT_4x4) ? (texelSize >> 1) : 0;
 
@@ -1125,7 +1142,7 @@ int _tmain(int argc, TCHAR **argv) {
 			char *prefix = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "tex_" : "";
 
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
-			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', stringFromFormat(format), texture.palette.nColors,
+			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
 				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
 			fprintf(fp, "#include <nds.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
 
@@ -1172,7 +1189,7 @@ int _tmain(int argc, TCHAR **argv) {
 			//write header
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
 			fp = _tfopen(nameBuffer, _T("wb"));
-			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', stringFromFormat(format), texture.palette.nColors,
+			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
 				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
 			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
 			fprintf(fp, "//\n// Generated texel data\n//\n");

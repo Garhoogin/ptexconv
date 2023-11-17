@@ -4,7 +4,7 @@
 //
 // Structure used by texture conversion functions.
 //
-typedef struct {
+typedef struct TxConversionParameters_ {
 	COLOR32 *px;
 	int width;
 	int height;
@@ -23,29 +23,29 @@ typedef struct {
 	void (*callback) (void *);
 	void *callbackParam;
 	char pnam[17];
-} CREATEPARAMS;
+} TxConversionParameters;
 
 //
 // Counts the number of colors in an image (transparent counts as a color)
 //
-int countColors(COLOR32 *px, int nPx);
+int ImgCountColors(COLOR32 *px, int nPx);
 
 //
 // Convert an image to a direct mode texture
 //
-int textureConvertDirect(CREATEPARAMS *params);
+int TxConvertDirect(TxConversionParameters *params);
 
 //
 // Convert an image to a paletted texture
 //
-int textureConvertPalette(CREATEPARAMS *params);
+int TxConvertIndexedOpaque(TxConversionParameters *params);
 
 //
 // Convert an image to a translucent (a3i5 or a5i3) texture
 //
-int textureConvertTranslucent(CREATEPARAMS *params);
+int TxConvertIndexedTranslucent(TxConversionParameters *params);
 
-//progress markers for textureConvert4x4.
+//progress markers for TxConvert4x4.
 extern volatile int g_texCompressionProgress;
 extern volatile int g_texCompressionProgressMax;
 extern volatile int g_texCompressionFinished;
@@ -53,9 +53,9 @@ extern volatile int g_texCompressionFinished;
 //
 // Convert an image to a 4x4 compressed texture
 //
-int textureConvert4x4(CREATEPARAMS *params);
+int TxConvert4x4(TxConversionParameters *params);
 
 //
 // Convert a texture given some input parameters.
 //
-int textureConvert(CREATEPARAMS *params);
+int TxConvert(TxConversionParameters *params);

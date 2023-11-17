@@ -14,22 +14,68 @@
 #define TRUE 1
 #define FALSE 0
 
+//optimize for speed rather than size
+#ifndef _DEBUG
+#ifdef _MSC_VER
+#pragma optimize("t", on)
+#endif
+#endif
+
 int ilog2(int x);
 
-int textureConvertDirect(CREATEPARAMS *params) {
+static int TxiRoundUpDimension(int x) {
+	x = (x << 1) - 1;
+	return 1 << ilog2(x); //rounds down
+}
+
+static COLOR32 *TxiPadTextureImage(COLOR32 *px, int width, int height, int *outWidth, int *outHeight) {
+	//if this is a 0x0 image somehow just return an 8x8 transparent square
+	if (width == 0 || height == 0) {
+		*outWidth = 8;
+		*outHeight = 8;
+		return (COLOR32 *) calloc(8 * 8, sizeof(COLOR32));
+	}
+
+	//function imitates iMageStudio behavior
+	int padWidth = TxiRoundUpDimension(width);
+	int padHeight = TxiRoundUpDimension(height);
+	if (padWidth < 8) padWidth = 8;
+	if (padHeight < 8) padHeight = 8;
+
+	COLOR32 *out = (COLOR32 *) calloc(padWidth * padHeight, sizeof(COLOR32));
+
+	//fill rows
+	for (int y = 0; y < padHeight; y++) {
+		COLOR32 *rowSrc = px + y * width;
+		COLOR32 *rowDst = out + y * padWidth;
+		if (y >= height) {
+			rowSrc = px + (height - 1) * width;
+		}
+		memcpy(rowDst, rowSrc, width * sizeof(COLOR32));
+
+		//copy last pixel for the remainder of the width
+		for (int x = width; x < padWidth; x++) {
+			rowDst[x] = rowSrc[width - 1];
+		}
+	}
+
+	*outWidth = padWidth;
+	*outHeight = padHeight;
+	return out;
+}
+
+int TxConvertDirect(TxConversionParameters *params) {
 	//convert to direct color.
 	int width = params->width, height = params->height;
 	COLOR32 *px = params->px;
 
+	COLOR *txel = (COLOR *) calloc(width * height, 2);
 	params->dest->texels.texImageParam = (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23) | (params->fmt << 26);
-	if (params->dest->texels.cmp) free(params->dest->texels.cmp);
 	params->dest->texels.cmp = NULL;
-	if (params->dest->texels.texel) free(params->dest->texels.texel);
-	if (params->dest->palette.pal) free(params->dest->palette.pal);
 	params->dest->palette.pal = NULL;
 	params->dest->palette.nColors = 0;
-	COLOR *txel = (COLOR *) calloc(width * height, 2);
 	params->dest->texels.texel = (unsigned char *) txel;
+
 	for (int i = 0; i < width * height; i++) {
 		COLOR32 p = px[i];
 		COLOR c = ColorConvertToDS(p);
@@ -46,7 +92,7 @@ int textureConvertDirect(CREATEPARAMS *params) {
 	return 0;
 }
 
-int textureConvertPalette(CREATEPARAMS *params) {
+int TxConvertIndexedOpaque(TxConversionParameters *params) {
 	//convert to translucent. First, generate a palette of colors.
 	int nColors = 0, bitsPerPixel = 0;
 	int width = params->width, height = params->height;
@@ -80,7 +126,7 @@ int textureConvertPalette(CREATEPARAMS *params) {
 
 	if (!params->useFixedPalette) {
 		//generate a palette, making sure to leave a transparent color, if applicable.
-		createPaletteSlowEx(params->px, width, height, palette + hasTransparent, nColors - hasTransparent,
+		RxCreatePaletteEx(params->px, width, height, palette + hasTransparent, nColors - hasTransparent,
 			params->balance, params->colorBalance, params->enhanceColors, TRUE);
 
 		//reduce palette color depth
@@ -97,29 +143,24 @@ int textureConvertPalette(CREATEPARAMS *params) {
 	int nBytes = width * height * bitsPerPixel / 8;
 	uint8_t *txel = (uint8_t *) calloc(nBytes, 1);
 	float diffuse = params->dither ? params->diffuseAmount : 0.0f;
-	ditherImagePaletteEx(params->px, NULL, width, height, palette, nColors, TRUE, TRUE, hasTransparent, diffuse,
+	RxReduceImageEx(params->px, NULL, width, height, palette, nColors, TRUE, TRUE, hasTransparent, diffuse, 
 		params->balance, params->colorBalance, params->enhanceColors);
 
 	//write texel data.
 	for (int i = 0; i < width * height; i++) {
 		COLOR32 p = params->px[i];
 		int index = 0;
-		if ((p >> 24) >= 0x80) index = closestPalette(p, palette + hasTransparent, nColors - hasTransparent) + hasTransparent;
+		if ((p >> 24) >= 0x80) index = RxPaletteFindClosestColorSimple(p, palette + hasTransparent, nColors - hasTransparent) + hasTransparent;
 		txel[i / pixelsPerByte] |= index << (bitsPerPixel * (i & (pixelsPerByte - 1)));
 	}
 
 	//update texture info
-	if (params->dest->palette.pal) free(params->dest->palette.pal);
-	if (params->dest->texels.cmp) free(params->dest->texels.cmp);
-	if (params->dest->texels.texel) free(params->dest->texels.texel);
+	unsigned int param = (params->fmt << 26) | (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23);
+	if (hasTransparent) param |= (1 << 29);
 	params->dest->palette.nColors = nColors;
 	params->dest->palette.pal = (COLOR *) calloc(nColors, 2);
 	params->dest->texels.cmp = NULL;
 	params->dest->texels.texel = txel;
-	memcpy(params->dest->palette.name, params->pnam, 16);
-
-	unsigned int param = (params->fmt << 26) | (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23);
-	if (hasTransparent) param |= (1 << 29);
 	params->dest->texels.texImageParam = param;
 
 	for (int i = 0; i < nColors; i++) {
@@ -129,7 +170,7 @@ int textureConvertPalette(CREATEPARAMS *params) {
 	return 0;
 }
 
-int textureConvertTranslucent(CREATEPARAMS *params) {
+int TxConvertIndexedTranslucent(TxConversionParameters *params) {
 	//convert to translucent. First, generate a palette of colors.
 	int nColors = 0, alphaShift = 0, alphaMax = 0;
 	int width = params->width, height = params->height;
@@ -151,7 +192,7 @@ int textureConvertTranslucent(CREATEPARAMS *params) {
 
 	if (!params->useFixedPalette) {
 		//generate a palette, making sure to leave a transparent color, if applicable.
-		createPaletteSlowEx(params->px, width, height, palette, nColors,
+		RxCreatePaletteEx(params->px, width, height, palette, nColors,
 			params->balance, params->colorBalance, params->enhanceColors, TRUE);
 
 		//reduce palette color depth
@@ -168,16 +209,16 @@ int textureConvertTranslucent(CREATEPARAMS *params) {
 	int nBytes = width * height;
 	uint8_t *txel = (uint8_t *) calloc(nBytes, 1);
 	float diffuse = params->dither ? params->diffuseAmount : 0.0f;
-	ditherImagePaletteEx(params->px, NULL, width, height, palette, nColors, FALSE, FALSE, FALSE, diffuse,
+	RxReduceImageEx(params->px, NULL, width, height, palette, nColors, FALSE, FALSE, FALSE, diffuse,
 		params->balance, params->colorBalance, params->enhanceColors);
 
 	//write texel data.
 	for (int i = 0; i < width * height; i++) {
 		COLOR32 p = params->px[i];
-		int index = closestPalette(p, palette, nColors);
+		int index = RxPaletteFindClosestColorSimple(p, palette, nColors);
 		int alpha = (((p >> 24) & 0xFF) * alphaMax + 127) / 255;
 		txel[i] = index | (alpha << alphaShift);
-		if (params->ditherAlpha) {
+		if (params->ditherAlpha) {				
 			int backAlpha = (alpha * 255 + (alphaMax >> 1)) / alphaMax;
 			int errorAlpha = backAlpha - ((p >> 24) & 0xFF);
 			doDiffuse(i, width, height, params->px, 0, 0, 0, -errorAlpha, params->diffuseAmount);
@@ -192,7 +233,6 @@ int textureConvertTranslucent(CREATEPARAMS *params) {
 	params->dest->palette.pal = (COLOR *) calloc(nColors, 2);
 	params->dest->texels.cmp = NULL;
 	params->dest->texels.texel = txel;
-	memcpy(params->dest->palette.name, params->pnam, 16);
 
 	unsigned int param = (params->fmt << 26) | (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23);
 	params->dest->texels.texImageParam = param;
@@ -204,8 +244,8 @@ int textureConvertTranslucent(CREATEPARAMS *params) {
 	return 0;
 }
 
-//blend two colors together by weight. (out of 8)
-COLOR32 blend(COLOR32 col1, int weight1, COLOR32 col2, int weight2) {
+//TxiBlend18 two colors together by weight. (out of 8)
+static COLOR32 TxiBlend18(COLOR32 col1, int weight1, COLOR32 col2, int weight2) {
 	int r1 = col1 & 0xFF;
 	int g1 = (col1 >> 8) & 0xFF;
 	int b1 = (col1 >> 16) & 0xFF;
@@ -222,7 +262,7 @@ volatile int g_texCompressionProgress = 0;
 volatile int g_texCompressionProgressMax = 0;
 volatile int g_texCompressionFinished = 0;
 
-typedef struct {
+typedef struct TxTileData_ {
 	uint8_t rgb[64];           //the tile's initial RGBA color data
 	uint16_t used;             //marks a used tile
 	uint16_t mode;             //the tile's working palette mode
@@ -230,12 +270,12 @@ typedef struct {
 	uint16_t paletteIndex;     //the tile's working palette index
 	uint8_t transparentPixels; //number of transparent pixels
 	uint8_t duplicate;         //is duplicate?
-} TILEDATA;
+} TxTileData;
 
-int createPaletteFromHistogram(REDUCTION *reduction, int nColors, COLOR32 *out) {
+static int TxiCreatePaletteFromHistogram(RxReduction *reduction, int nColors, COLOR32 *out) {
 	reduction->nPaletteColors = nColors;
-	flattenHistogram(reduction);
-	optimizePalette(reduction);
+	RxHistFinalize(reduction);
+	RxComputePalette(reduction);
 
 	int nUsed = reduction->nUsedColors;
 	for (int i = 0; i < nColors; i++) {
@@ -247,33 +287,33 @@ int createPaletteFromHistogram(REDUCTION *reduction, int nColors, COLOR32 *out) 
 		}
 	}
 
-	qsort(out, nColors, sizeof(COLOR32), lightnessCompare);
+	qsort(out, nColors, sizeof(COLOR32), RxColorLightnessComparator);
 	return nUsed;
 }
 
-double computeInterpolatedError(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR c1, COLOR c2, int transparent, double maxError) {
+static double TxiComputeInterpolatedError(RxReduction *reduction, COLOR32 *px, int nPx, COLOR c1, COLOR c2, int transparent, double maxError) {
 	//expand palette
 	COLOR32 col0 = ColorConvertFromDS(c1);
 	COLOR32 col1 = ColorConvertFromDS(c2);
 	COLOR32 col2 = 0, col3 = 0;
 	if (!transparent) {
-		col2 = blend(col0, 3, col1, 5);
-		col3 = blend(col0, 5, col1, 3);
+		col2 = TxiBlend18(col0, 3, col1, 5);
+		col3 = TxiBlend18(col0, 5, col1, 3);
 	} else {
-		col2 = blend(col0, 4, col1, 4);
+		col2 = TxiBlend18(col0, 4, col1, 4);
 	}
 	int nColors = 3 + !transparent;
 	COLOR32 palette[] = { col0, col1, col2, col3 };
 
-	return computePaletteErrorYiq(reduction, px, nPx, palette, nColors, 128, maxError);
+	return RxComputePaletteError(reduction, px, nPx, palette, nColors, 128, maxError);
 }
 
-double testBlockAdd(REDUCTION *reduction, COLOR32 *px, int nPx, int transparent, COLOR *pc1, COLOR *pc2, int amt, int cshift, double error) {
+static double TxiTestAddEndpoints(RxReduction *reduction, COLOR32 *px, int nPx, int transparent, COLOR *pc1, COLOR *pc2, int amt, int cshift, double error) {
 	//try adding to color 1
 	int channel = (*pc1 >> cshift) & 0x1F;
 	if ((amt < 0 && channel >= -amt) || (amt > 0 && channel <= 31 - amt)) { //check for over/underflows
 		*pc1 -= (amt << cshift);
-		double err2 = computeInterpolatedError(reduction, px, nPx, *pc1, *pc2, transparent, error);
+		double err2 = TxiComputeInterpolatedError(reduction, px, nPx, *pc1, *pc2, transparent, error);
 		if (err2 < error) {
 			error = err2;
 		} else {
@@ -285,7 +325,7 @@ double testBlockAdd(REDUCTION *reduction, COLOR32 *px, int nPx, int transparent,
 	channel = (*pc2 >> cshift) & 0x1F;
 	if ((amt < 0 && channel >= -amt) || (amt > 0 && channel <= 31 - amt)) { //check for over/underflows
 		*pc2 -= (amt << cshift);
-		double err2 = computeInterpolatedError(reduction, px, nPx, *pc1, *pc2, transparent, error);
+		double err2 = TxiComputeInterpolatedError(reduction, px, nPx, *pc1, *pc2, transparent, error);
 		if (err2 < error) {
 			error = err2;
 		} else {
@@ -297,19 +337,19 @@ double testBlockAdd(REDUCTION *reduction, COLOR32 *px, int nPx, int transparent,
 	return error;
 }
 
-double testBlockStep(REDUCTION *reduction, COLOR32 *px, int nPx, int transparent, COLOR *c1, COLOR *c2, int channel, double error) {
-	double newErr = testBlockAdd(reduction, px, nPx, transparent, c1, c2, 1, 5 * channel, error); //add
+double TxiTestStepEndpoints(RxReduction *reduction, COLOR32 *px, int nPx, int transparent, COLOR *c1, COLOR *c2, int channel, double error) {
+	double newErr = TxiTestAddEndpoints(reduction, px, nPx, transparent, c1, c2, 1, 5 * channel, error); //add
 	if (newErr < error) {
 		error = newErr;
 	} else {
-		error = testBlockAdd(reduction, px, nPx, transparent, c1, c2, -1, 5 * channel, error);   //subtract
+		error = TxiTestAddEndpoints(reduction, px, nPx, transparent, c1, c2, -1, 5 * channel, error);   //subtract
 	}
 	return error;
 }
 
-void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) {
+void TxiComputeEndpoints(RxReduction *reduction, COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) {
 	//if only 1 or 2 colors, fill the palette with those.
-
+	
 	COLOR32 colors[2] = { 0 };
 	int nColors = 0;
 	int transparent = 0;
@@ -341,8 +381,8 @@ void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMi
 			int y1, u1, v1, y2, u2, v2;
 			colors[0] = ColorRoundToDS15(colors[0]);
 			colors[1] = ColorRoundToDS15(colors[1]);
-			convertRGBToYUV(colors[0] & 0xFF, (colors[0] >> 8) & 0xFF, (colors[0] >> 16) & 0xFF, &y1, &u1, &v1);
-			convertRGBToYUV(colors[1] & 0xFF, (colors[1] >> 8) & 0xFF, (colors[1] >> 16) & 0xFF, &y2, &u2, &v2);
+			RxConvertRgbToYuv(colors[0] & 0xFF, (colors[0] >> 8) & 0xFF, (colors[0] >> 16) & 0xFF, &y1, &u1, &v1);
+			RxConvertRgbToYuv(colors[1] & 0xFF, (colors[1] >> 8) & 0xFF, (colors[1] >> 16) & 0xFF, &y2, &u2, &v2);
 			if (y1 > y2) {
 				*colorMin = colors[1];
 				*colorMax = colors[0];
@@ -355,34 +395,32 @@ void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMi
 	}
 
 	//use principal component analysis to determine endpoints
-	int yiq1[4], yiq2[4], rgb1[4], rgb2[4];
-	HIST_ENTRY *firstEntry, *lastEntry;
-	resetHistogram(reduction);
-	computeHistogram(reduction, px, 4, nPx / 4);
-	flattenHistogram(reduction);
-	sortHistogram(reduction, 0, reduction->histogram->nEntries);
+	RxRgbColor rgb1, rgb2;
+	RxHistEntry *firstEntry, *lastEntry;
+	RxHistClear(reduction);
+	RxHistAdd(reduction, px, 4, nPx / 4);
+	RxHistFinalize(reduction);
+	RxHistSort(reduction, 0, reduction->histogram->nEntries);
 
 	//choose first and last colors along the principal axis (greatest Y is at the end)
 	firstEntry = reduction->histogramFlat[0];
 	lastEntry = reduction->histogramFlat[reduction->histogram->nEntries - 1];
-	yiq1[0] = firstEntry->y, yiq1[1] = firstEntry->i, yiq1[2] = firstEntry->q, yiq1[3] = 0xFF;
-	yiq2[0] = lastEntry->y, yiq2[1] = lastEntry->i, yiq2[2] = lastEntry->q, yiq2[3] = 0xFF;
-	yiqToRgb(rgb1, yiq1);
-	yiqToRgb(rgb2, yiq2);
+	RxConvertYiqToRgb(&rgb1, &firstEntry->color);
+	RxConvertYiqToRgb(&rgb2, &lastEntry->color);
 
 	//round to nearest colors.
-	COLOR32 full1 = rgb1[0] | (rgb1[1] << 8) | (rgb1[2] << 16);
-	COLOR32 full2 = rgb2[0] | (rgb2[1] << 8) | (rgb2[2] << 16);
+	COLOR32 full1 = rgb1.r | (rgb1.g << 8) | (rgb1.b << 16);
+	COLOR32 full2 = rgb2.r | (rgb2.g << 8) | (rgb2.b << 16);
 	COLOR c1 = ColorConvertToDS(full1);
 	COLOR c2 = ColorConvertToDS(full2);
 
 	//try out varying the RGB values. Start G, then R, then B. Do this a few times.
-	double error = computeInterpolatedError(reduction, px, nPx, c1, c2, transparent, 1e32);
+	double error = TxiComputeInterpolatedError(reduction, px, nPx, c1, c2, transparent, 1e32);
 	for (int i = 0; i < 10; i++) {
 		COLOR old1 = c1, old2 = c2;
-		error = testBlockStep(reduction, px, nPx, transparent, &c1, &c2, COLOR_CHANNEL_G, error);
-		error = testBlockStep(reduction, px, nPx, transparent, &c1, &c2, COLOR_CHANNEL_R, error);
-		error = testBlockStep(reduction, px, nPx, transparent, &c1, &c2, COLOR_CHANNEL_B, error);
+		error = TxiTestStepEndpoints(reduction, px, nPx, transparent, &c1, &c2, COLOR_CHANNEL_G, error);
+		error = TxiTestStepEndpoints(reduction, px, nPx, transparent, &c1, &c2, COLOR_CHANNEL_R, error);
+		error = TxiTestStepEndpoints(reduction, px, nPx, transparent, &c1, &c2, COLOR_CHANNEL_B, error);
 
 		//early breakout check: are we doing anything?
 		if (old1 == c1 && old2 == c2) break;
@@ -392,8 +430,8 @@ void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMi
 	int y1, u1, v1, y2, u2, v2;
 	full1 = ColorConvertFromDS(c1);
 	full2 = ColorConvertFromDS(c2);
-	convertRGBToYUV(full1 & 0xFF, (full1 >> 8) & 0xFF, (full1 >> 16) & 0xFF, &y1, &u1, &v1);
-	convertRGBToYUV(full2 & 0xFF, (full2 >> 8) & 0xFF, (full2 >> 16) & 0xFF, &y2, &u2, &v2);
+	RxConvertRgbToYuv(full1 & 0xFF, (full1 >> 8) & 0xFF, (full1 >> 16) & 0xFF, &y1, &u1, &v1);
+	RxConvertRgbToYuv(full2 & 0xFF, (full2 >> 8) & 0xFF, (full2 >> 16) & 0xFF, &y2, &u2, &v2);
 	if (y2 > y1) {
 		//swap order to keep me sane
 		COLOR32 temp = full2;
@@ -404,26 +442,26 @@ void getColorBounds(REDUCTION *reduction, COLOR32 *px, int nPx, COLOR32 *colorMi
 	*colorMax = full1;
 }
 
-int computeColorDifference(COLOR32 c1, COLOR32 c2) {
+static int TxiComputeColorDifferenceSimple(COLOR32 c1, COLOR32 c2) {
 	int r1 = c1 & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = (c1 >> 16) & 0xFF;
 	int r2 = c2 & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = (c2 >> 16) & 0xFF;
 
 	int dy, du, dv;
 	//property of linear transformations :)
-	convertRGBToYUV(r2 - r1, g2 - g1, b2 - b1, &dy, &du, &dv);
+	RxConvertRgbToYuv(r2 - r1, g2 - g1, b2 - b1, &dy, &du, &dv);
 
 	return 4 * dy * dy + du * du + dv * dv;
 }
 
 //compute LMS squared
-int computeLMS(COLOR32 *tile, COLOR32 *palette, int transparent) {
+static int TxiComputeMSE(COLOR32 *tile, COLOR32 *palette, int transparent) {
 	int total = 0, nCount = 0;
 	for (int i = 0; i < 16; i++) {
 		COLOR32 c = tile[i];
 		if (!transparent || (c >> 24) >= 0x80) {
-			int closest = closestPalette(c, palette, 4 - transparent);
+			int closest = RxPaletteFindClosestColorSimple(c, palette, 4 - transparent);
 			COLOR32 chosen = palette[closest];
-			total += computeColorDifference(c, chosen);
+			total += TxiComputeColorDifferenceSimple(c, chosen);
 			nCount++;
 		}
 	}
@@ -431,19 +469,19 @@ int computeLMS(COLOR32 *tile, COLOR32 *palette, int transparent) {
 	return total / nCount;
 }
 
-void choosePaletteAndMode(REDUCTION *reduction, TILEDATA *tile) {
+static void TxiChoosePaletteAndMode(RxReduction *reduction, TxTileData *tile) {
 	//first try interpolated. If it's not good enough, use full color.
 	COLOR32 colorMin, colorMax;
-	getColorBounds(reduction, (COLOR32 *) tile->rgb, 16, &colorMin, &colorMax);
+	TxiComputeEndpoints(reduction, (COLOR32 *) tile->rgb, 16, &colorMin, &colorMax);
 	if (tile->transparentPixels) {
-		COLOR32 mid = blend(colorMin, 4, colorMax, 4);
+		COLOR32 mid = TxiBlend18(colorMin, 4, colorMax, 4);
 		COLOR32 palette[] = { colorMax, mid, colorMin, 0 };
 		COLOR32 paletteFull[4];
 
-		int error = computeLMS((COLOR32 *) tile->rgb, palette, 1);
-		resetHistogram(reduction);
-		computeHistogram(reduction, (COLOR32 *) tile->rgb, 4, 4);
-		int nFull = createPaletteFromHistogram(reduction, 3, paletteFull);
+		int error = TxiComputeMSE((COLOR32 *) tile->rgb, palette, 1);
+		RxHistClear(reduction);
+		RxHistAdd(reduction, (COLOR32 *) tile->rgb, 4, 4);
+		int nFull = TxiCreatePaletteFromHistogram(reduction, 3, paletteFull);
 		//if error <= 64, then these colors are good enough
 		if (error <= 64 || nFull <= 2) {
 			tile->palette[0] = ColorConvertToDS(colorMax);
@@ -460,15 +498,15 @@ void choosePaletteAndMode(REDUCTION *reduction, TILEDATA *tile) {
 			tile->mode = COMP_TRANSPARENT | COMP_FULL;
 		}
 	} else {
-		COLOR32 mid1 = blend(colorMin, 5, colorMax, 3);
-		COLOR32 mid2 = blend(colorMin, 3, colorMax, 5);
+		COLOR32 mid1 = TxiBlend18(colorMin, 5, colorMax, 3);
+		COLOR32 mid2 = TxiBlend18(colorMin, 3, colorMax, 5);
 		COLOR32 palette[] = { colorMax, mid2, mid1, colorMin };
 		COLOR32 paletteFull[4];
 
-		int error = computeLMS((COLOR32 *) tile->rgb, palette, 0);
-		resetHistogram(reduction);
-		computeHistogram(reduction, (COLOR32 *) tile->rgb, 4, 4);
-		int nFull = createPaletteFromHistogram(reduction, 4, paletteFull);
+		int error = TxiComputeMSE((COLOR32 *) tile->rgb, palette, 0);
+		RxHistClear(reduction);
+		RxHistAdd(reduction, (COLOR32 *) tile->rgb, 4, 4);
+		int nFull = TxiCreatePaletteFromHistogram(reduction, 4, paletteFull);
 		if (error <= 64 || nFull <= 2) {
 			tile->palette[0] = ColorConvertToDS(colorMax);
 			tile->palette[1] = ColorConvertToDS(colorMin);
@@ -487,7 +525,7 @@ void choosePaletteAndMode(REDUCTION *reduction, TILEDATA *tile) {
 	}
 }
 
-void addTile(REDUCTION *reduction, TILEDATA *data, int index, COLOR32 *px, int *totalIndex) {
+static void TxiAddTile(RxReduction *reduction, TxTileData *data, int index, COLOR32 *px, int *totalIndex) {
 	memcpy(data[index].rgb, px, 64);
 	data[index].duplicate = 0;
 	data[index].used = 1;
@@ -513,12 +551,12 @@ void addTile(REDUCTION *reduction, TILEDATA *data, int index, COLOR32 *px, int *
 		data[index].palette[1] = 0;
 		return;
 	}
-
+	
 	//is it a duplicate?
 	int isDuplicate = 0;
 	int duplicateIndex = 0;
 	for (int i = index - 1; i >= 0; i--) {
-		TILEDATA *tile = data + i;
+		TxTileData *tile = data + i;
 		COLOR32 *px1 = (COLOR32 *) tile->rgb;
 		COLOR32 *px2 = (COLOR32 *) data[index].rgb;
 
@@ -530,17 +568,17 @@ void addTile(REDUCTION *reduction, TILEDATA *data, int index, COLOR32 *px, int *
 	}
 
 	if (isDuplicate) {
-		memcpy(data + index, data + duplicateIndex, sizeof(TILEDATA));
+		memcpy(data + index, data + duplicateIndex, sizeof(TxTileData));
 		data[index].duplicate = 1;
 		data[index].paletteIndex = data[duplicateIndex].paletteIndex;
 	} else {
 		//generate a palette and determine the mode.
-		choosePaletteAndMode(reduction, data + index);
+		TxiChoosePaletteAndMode(reduction, data + index);
 		data[index].paletteIndex = *totalIndex;
 		//is the palette and mode identical to a non-duplicate tile?
 		for (int i = index - 1; i >= 0; i--) {
-			TILEDATA *tile1 = data + i;
-			TILEDATA *tile2 = data + index;
+			TxTileData *tile1 = data + i;
+			TxTileData *tile2 = data + index;
 			if (tile1->duplicate) continue;
 			if (tile1->mode != tile2->mode) continue;
 			if (tile1->palette[0] != tile2->palette[0] || tile1->palette[1] != tile2->palette[1]) continue;
@@ -563,8 +601,8 @@ void addTile(REDUCTION *reduction, TILEDATA *data, int index, COLOR32 *px, int *
 	g_texCompressionProgress++;
 }
 
-TILEDATA *createTileData(REDUCTION *reduction, COLOR32 *px, int tilesX, int tilesY) {
-	TILEDATA *data = (TILEDATA *) calloc(tilesX * tilesY, sizeof(TILEDATA));
+static TxTileData *TxiCreateTileData(RxReduction *reduction, COLOR32 *px, int tilesX, int tilesY) {
+	TxTileData *data = (TxTileData *) calloc(tilesX * tilesY, sizeof(TxTileData));
 	int paletteIndex = 0;
 	for (int y = 0; y < tilesY; y++) {
 		for (int x = 0; x < tilesX; x++) {
@@ -574,19 +612,19 @@ TILEDATA *createTileData(REDUCTION *reduction, COLOR32 *px, int tilesX, int tile
 			memcpy(tile + 4, px + offs + tilesX * 4, 16);
 			memcpy(tile + 8, px + offs + tilesX * 8, 16);
 			memcpy(tile + 12, px + offs + tilesX * 12, 16);
-			addTile(reduction, data, x + y * tilesX, tile, &paletteIndex);
+			TxiAddTile(reduction, data, x + y * tilesX, tile, &paletteIndex);
 		}
 	}
 	return data;
 }
 
-int getColorsFromTable(uint8_t type) {
+static int TxiTableToPaletteSize(uint8_t type) {
 	if (type == 0) return 0;
 	if (type == 2 || type == 8) return 2;
 	return 4;
 }
 
-uint16_t getModeFromTable(uint8_t type) {
+static uint16_t TxiTableToMode(uint8_t type) {
 	if (type == 1) return COMP_TRANSPARENT | COMP_FULL;
 	if (type == 2) return COMP_TRANSPARENT | COMP_INTERPOLATE;
 	if (type == 4) return COMP_OPAQUE | COMP_FULL;
@@ -594,14 +632,14 @@ uint16_t getModeFromTable(uint8_t type) {
 	return COMP_TRANSPARENT | COMP_FULL;
 }
 
-int computePaletteDifference(COLOR *pal1, COLOR *pal2, int nColors, int nMaxError) {
+static int TxiComputePaletteDifference(COLOR *pal1, COLOR *pal2, int nColors, int nMaxError) {
 	int total = 0;
-
+	
 	for (int i = 0; i < nColors; i++) {
 		if (pal1[i] != pal2[i]) {
 			COLOR32 c1 = ColorConvertFromDS(pal1[i]);
 			COLOR32 c2 = ColorConvertFromDS(pal2[i]);
-			total += computeColorDifference(c1, c2);
+			total += TxiComputeColorDifferenceSimple(c1, c2);
 		}
 
 		if (total >= nMaxError) return nMaxError;
@@ -612,7 +650,7 @@ int computePaletteDifference(COLOR *pal1, COLOR *pal2, int nColors, int nMaxErro
 	return total;
 }
 
-int findClosestPalettes(COLOR *palette, uint8_t *colorTable, int nColors, int *colorIndex1, int *colorIndex2) {
+static int TxiFindClosestPalettes(COLOR *palette, uint8_t *colorTable, int nColors, int *colorIndex1, int *colorIndex2) {
 	//determine which two palettes are the most similar. For 2-color palettes, multiply difference by 2.
 	int leastDistance = 0x10000000;
 	int idx1 = 0;
@@ -630,14 +668,14 @@ int findClosestPalettes(COLOR *palette, uint8_t *colorTable, int nColors, int *c
 		while (idx2 + nColorsInThisPalette <= nColors) {
 			uint8_t type2 = colorTable[idx2];
 			if (!type2) break;
-			int nColorsInSecondPalette = getColorsFromTable(type2);
+			int nColorsInSecondPalette = TxiTableToPaletteSize(type2);
 			if (type2 != type1) {
 				idx2 += nColorsInSecondPalette;
 				continue;
 			}
 
 			//same type, let's compare.
-			int dst = computePaletteDifference(palette + idx1, palette + idx2, nColorsInThisPalette, leastDistance);
+			int dst = TxiComputePaletteDifference(palette + idx1, palette + idx2, nColorsInThisPalette, leastDistance);
 			if (dst < leastDistance) {
 				leastDistance = dst;
 				*colorIndex1 = idx1;
@@ -653,7 +691,7 @@ int findClosestPalettes(COLOR *palette, uint8_t *colorTable, int nColors, int *c
 	return leastDistance;
 }
 
-void mergePalettes(REDUCTION *reduction, TILEDATA *tileData, int nTiles, COLOR *palette, int paletteIndex, uint16_t palettesMode) {
+static void TxiMergePalettes(RxReduction *reduction, TxTileData *tileData, int nTiles, COLOR *palette, int paletteIndex, uint16_t palettesMode) {
 	//count the number of tiles that use this palette.
 	int nUsedTiles = 0;
 	for (int i = 0; i < nTiles; i++) {
@@ -664,13 +702,13 @@ void mergePalettes(REDUCTION *reduction, TILEDATA *tileData, int nTiles, COLOR *
 	COLOR32 expandPal[4];
 	if (palettesMode == (COMP_TRANSPARENT | COMP_FULL)) {
 		//transparent, full color
-		resetHistogram(reduction);
+		RxHistClear(reduction);
 		for (int i = 0; i < nTiles; i++) {
 			if (tileData[i].paletteIndex == paletteIndex && tileData[i].used) {
-				computeHistogram(reduction, (COLOR32 *) tileData[i].rgb, 4, 4);
+				RxHistAdd(reduction, (COLOR32 *) tileData[i].rgb, 4, 4);
 			}
 		}
-		createPaletteFromHistogram(reduction, 3, expandPal + 1);
+		TxiCreatePaletteFromHistogram(reduction, 3, expandPal + 1);
 
 		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[2]); //don't waste this slot
 		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[1]);
@@ -690,20 +728,20 @@ void mergePalettes(REDUCTION *reduction, TILEDATA *tileData, int nTiles, COLOR *
 				copiedTiles++;
 			}
 		}
-		getColorBounds(reduction, px, 16 * nUsedTiles, &expandPal[0], &expandPal[1]);
+		TxiComputeEndpoints(reduction, px, 16 * nUsedTiles, &expandPal[0], &expandPal[1]);
 		free(px);
 
 		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[1]);
 		palette[paletteIndex * 2 + 1] = ColorConvertToDS(expandPal[0]);
 	} else if (palettesMode == (COMP_OPAQUE | COMP_FULL)) {
 		//opaque, full color
-		resetHistogram(reduction);
+		RxHistClear(reduction);
 		for (int i = 0; i < nTiles; i++) {
 			if (tileData[i].paletteIndex == paletteIndex && tileData[i].used) {
-				computeHistogram(reduction, (COLOR32 *) tileData[i].rgb, 4, 4);
+				RxHistAdd(reduction, (COLOR32 *) tileData[i].rgb, 4, 4);
 			}
 		}
-		int nFull = createPaletteFromHistogram(reduction, 4, expandPal);
+		int nFull = TxiCreatePaletteFromHistogram(reduction, 4, expandPal);
 
 		if (nFull < 4) expandPal[0] = expandPal[1];
 		palette[paletteIndex * 2 + 0] = ColorConvertToDS(expandPal[3]);
@@ -713,7 +751,7 @@ void mergePalettes(REDUCTION *reduction, TILEDATA *tileData, int nTiles, COLOR *
 	}
 }
 
-int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *tileData, int tilesX, int tilesY, int threshold) {
+static int TxiBuildCompressedPalette(RxReduction *reduction, COLOR *palette, int nPalettes, TxTileData *tileData, int tilesX, int tilesY, int threshold) {
 	//iterate over all non-duplicate tiles, adding the palettes.
 	//colorTable keeps track of how each color is intended to be used.
 	//00 - unused. 01 - mode 0x0000. 02 - mode 0x4000. 04 - mode 0x8000. 08 - mode 0xC000.
@@ -723,7 +761,7 @@ int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *
 	for (int y = 0; y < tilesY; y++) {
 		for (int x = 0; x < tilesX; x++) {
 			int index = x + y * tilesX;
-			TILEDATA *tile = tileData + index;
+			TxTileData *tile = tileData + index;
 			if (tile->duplicate || !tile->used) {
 				//the paletteIndex field of a duplicate tile is first set to the tile index it is a duplicate of.
 				//set it to an actual palette index here.
@@ -746,17 +784,17 @@ int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *
 				tile->paletteIndex = firstSlot / 2;
 				firstSlot += nConsumed;
 			}
-			if (!fits || (threshold && firstSlot >= 8)) {
+			if(!fits || (threshold && firstSlot >= 8)) {
 				//does NOT fit, we need to rearrange some things.
 
 				while ((firstSlot + nConsumed > nPalettes * 2) || (threshold && fits)) {
 					//determine which two palettes are the most similar.
 					int colorIndex1 = -1, colorIndex2 = -1;
-					int distance = findClosestPalettes(palette, colorTable, firstSlot, &colorIndex1, &colorIndex2);
+					int distance = TxiFindClosestPalettes(palette, colorTable, firstSlot, &colorIndex1, &colorIndex2);
 					if (colorIndex1 == -1) break;
 					if (fits && (distance > diffThreshold || firstSlot < 8)) break;
-					int nColorsInPalettes = getColorsFromTable(colorTable[colorIndex1]);
-					uint16_t palettesMode = getModeFromTable(colorTable[colorIndex1]);
+					int nColorsInPalettes = TxiTableToPaletteSize(colorTable[colorIndex1]);
+					uint16_t palettesMode = TxiTableToMode(colorTable[colorIndex1]);
 
 					//find tiles that use colorIndex2. Set them to use colorIndex1. 
 					//then subtract from all palette indices > colorIndex2. Then we can
@@ -775,7 +813,7 @@ int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *
 					memmove(colorTable + colorIndex2, colorTable + colorIndex2 + nColorsInPalettes, nToShift);
 
 					//merge those palettes that we've just combined.
-					mergePalettes(reduction, tileData, tilesX * tilesY, palette, colorIndex1 / 2, palettesMode);
+					TxiMergePalettes(reduction, tileData, tilesX * tilesY, palette, colorIndex1 / 2, palettesMode);
 
 					//update end pointer to reflect the change.
 					firstSlot -= nColorsInPalettes;
@@ -797,13 +835,13 @@ int buildPalette(REDUCTION *reduction, COLOR *palette, int nPalettes, TILEDATA *
 	return firstSlot;
 }
 
-void expandPalette(COLOR *nnsPal, uint16_t mode, COLOR32 *dest, int *nOpaque) {
+static void TxiExpandPalette(COLOR *nnsPal, uint16_t mode, COLOR32 *dest, int *nOpaque) {
 	dest[0] = ColorConvertFromDS(nnsPal[0]);
 	dest[1] = ColorConvertFromDS(nnsPal[1]);
 	mode &= COMP_MODE_MASK;
 	if (mode & COMP_OPAQUE) *nOpaque = 4;
 	else *nOpaque = 3;
-
+	
 	if (mode == (COMP_OPAQUE | COMP_FULL)) {
 		dest[2] = ColorConvertFromDS(nnsPal[2]);
 		dest[3] = ColorConvertFromDS(nnsPal[3]);
@@ -811,28 +849,28 @@ void expandPalette(COLOR *nnsPal, uint16_t mode, COLOR32 *dest, int *nOpaque) {
 		dest[2] = ColorConvertFromDS(nnsPal[2]);
 		dest[3] = 0;
 	} else if (mode == (COMP_TRANSPARENT | COMP_INTERPOLATE)) {
-		dest[2] = blend(dest[0], 4, dest[1], 4);
+		dest[2] = TxiBlend18(dest[0], 4, dest[1], 4);
 		dest[3] = 0;
 	} else if (mode == (COMP_OPAQUE | COMP_INTERPOLATE)) {
-		dest[2] = blend(dest[0], 5, dest[1], 3);
-		dest[3] = blend(dest[0], 3, dest[1], 5);
+		dest[2] = TxiBlend18(dest[0], 5, dest[1], 3);
+		dest[3] = TxiBlend18(dest[0], 3, dest[1], 5);
 	}
 }
 
-double computeTilePidxError(REDUCTION *reduction, COLOR32 *px, COLOR *palette, uint16_t mode, double maxError) {
+static double TxiComputeTilePidxError(RxReduction *reduction, COLOR32 *px, COLOR *palette, uint16_t mode, double maxError) {
 	int nOpaque;
 	COLOR32 expandPal[4];
-	expandPalette(palette + COMP_INDEX(mode), mode, expandPal, &nOpaque);
-	return computePaletteErrorYiq(reduction, px, 16, expandPal, nOpaque, 128, maxError);
+	TxiExpandPalette(palette + COMP_INDEX(mode), mode, expandPal, &nOpaque);
+	return RxComputePaletteError(reduction, px, 16, expandPal, nOpaque, 128, maxError);
 }
 
-uint16_t findOptimalPidx(REDUCTION *reduction, TILEDATA *tile, COLOR *palette, int nColors) {
+static uint16_t TxiFindOptimalPidx(RxReduction *reduction, TxTileData *tile, COLOR *palette, int nColors) {
 	COLOR32 *px = (COLOR32 *) tile->rgb;
 	int hasTransparent = tile->transparentPixels;
 
 	//start with default values
 	uint16_t leastPidx = tile->mode | tile->paletteIndex;
-	double leastError = computeTilePidxError(reduction, px, palette, leastPidx, 1e32);
+	double leastError = TxiComputeTilePidxError(reduction, px, palette, leastPidx, 1e32);
 	if (tile->transparentPixels == 16 || leastError == 0.0) {
 		return leastPidx;
 	}
@@ -848,9 +886,9 @@ uint16_t findOptimalPidx(REDUCTION *reduction, TILEDATA *tile, COLOR *palette, i
 			//nothing to gain from these modes sometimes
 			if (!hasTransparent && j == 0) continue;
 			if (hasTransparent && j >= 2) break;
-
+			
 			uint16_t mode = (j << 14) | (i >> 1);
-			double dst = computeTilePidxError(reduction, px, palette, mode, leastError);
+			double dst = TxiComputeTilePidxError(reduction, px, palette, mode, leastError);
 			if (dst < leastError) {
 				leastPidx = mode;
 				leastError = dst;
@@ -860,7 +898,7 @@ uint16_t findOptimalPidx(REDUCTION *reduction, TILEDATA *tile, COLOR *palette, i
 	return leastPidx;
 }
 
-int textureConvert4x4(CREATEPARAMS *params) {
+int TxConvert4x4(TxConversionParameters *params) {
 	//3-stage compression. First stage builds tile data, second stage builds palettes, third stage builds the final texture.
 	if (params->colorEntries < 16) params->colorEntries = 16;
 	params->colorEntries = (params->colorEntries + 7) & 0xFFFFFFF8;
@@ -870,15 +908,15 @@ int textureConvert4x4(CREATEPARAMS *params) {
 	g_texCompressionProgress = 0;
 
 	//create tile data
-	REDUCTION *reduction = (REDUCTION *) calloc(1, sizeof(REDUCTION));
-	initReduction(reduction, params->balance, params->colorBalance, 15, params->enhanceColors, 4);
-	TILEDATA *tileData = createTileData(reduction, params->px, tilesX, tilesY);
+	RxReduction *reduction = (RxReduction *) calloc(1, sizeof(RxReduction));
+	RxInit(reduction, params->balance, params->colorBalance, 15, params->enhanceColors, 4);
+	TxTileData *tileData = TxiCreateTileData(reduction, params->px, tilesX, tilesY);
 
 	//build the palettes.
 	COLOR *nnsPal = (COLOR *) calloc(params->colorEntries, sizeof(COLOR));
 	int nUsedColors;
 	if (!params->useFixedPalette) {
-		nUsedColors = buildPalette(reduction, nnsPal, params->colorEntries / 2, tileData, tilesX, tilesY, params->threshold);
+		nUsedColors = TxiBuildCompressedPalette(reduction, nnsPal, params->colorEntries / 2, tileData, tilesX, tilesY, params->threshold);
 	} else {
 		nUsedColors = params->colorEntries;
 		memcpy(nnsPal, params->fixedPalette, params->colorEntries * 2);
@@ -897,7 +935,7 @@ int textureConvert4x4(CREATEPARAMS *params) {
 		uint32_t texel = 0;
 
 		//double check that these settings are the most optimal for this tile.
-		uint16_t idx = findOptimalPidx(reduction, tileData + i, nnsPal, nUsedColors);
+		uint16_t idx = TxiFindOptimalPidx(reduction, tileData + i, nnsPal, nUsedColors);
 		uint16_t mode = idx & 0xC000;
 		uint16_t index = idx & 0x3FFF;
 		COLOR *thisPalette = nnsPal + (index * 2);
@@ -905,10 +943,10 @@ int textureConvert4x4(CREATEPARAMS *params) {
 
 		COLOR32 palette[4];
 		int paletteSize;
-		expandPalette(thisPalette, mode, palette, &paletteSize);
+		TxiExpandPalette(thisPalette, mode, palette, &paletteSize);
 
 		//if dither is enabled, do so here.
-		ditherImagePalette((COLOR32 *) tileData[i].rgb, 4, 4, palette, paletteSize, 0, 1, 0, diffuse);
+		RxReduceImage((COLOR32 *) tileData[i].rgb, 4, 4, palette, paletteSize, 0, 1, 0, diffuse);
 
 		for (int j = 0; j < 16; j++) {
 			int index = 0;
@@ -916,56 +954,74 @@ int textureConvert4x4(CREATEPARAMS *params) {
 			if ((col >> 24) < 0x80) {
 				index = 3;
 			} else {
-				index = closestPalette(col, palette, paletteSize);
+				index = RxPaletteFindClosestColorSimple(col, palette, paletteSize);
 			}
 			texel |= index << (j * 2);
 		}
 		txel[i] = texel;
 		g_texCompressionProgress++;
 	}
-	destroyReduction(reduction);
+	RxDestroy(reduction);
 	free(reduction);
 
 	//set fields in the texture
 	params->dest->palette.nColors = nUsedColors;
-	if (params->dest->palette.pal) free(params->dest->palette.pal);
 	params->dest->palette.pal = nnsPal;
-	memcpy(params->dest->palette.name, params->pnam, 16);
-	if (params->dest->texels.cmp) free(params->dest->texels.cmp);
-	if (params->dest->texels.texel) free(params->dest->texels.texel);
-	params->dest->texels.cmp = (unsigned short *) pidx;
+	params->dest->texels.cmp = pidx;
 	params->dest->texels.texel = (unsigned char *) txel;
 	params->dest->texels.texImageParam = (ilog2(width >> 3) << 20) | (ilog2(height >> 3) << 23) | (params->fmt << 26);
-
+	
 	free(tileData);
 	return 0;
 }
 
-int textureConvert(CREATEPARAMS *params) {
+int TxConvert(TxConversionParameters *params) {
+	//pad texture if needed
+	int padWidth, padHeight, sourceWidth = params->width, sourceHeight = params->height;
+	COLOR32 *srcPx = params->px;
+	COLOR32 *padded = TxiPadTextureImage(srcPx, sourceWidth, sourceHeight, &padWidth, &padHeight);
+
+	params->width = padWidth;
+	params->height = padHeight;
+	params->px = padded;
+
 	//begin conversion.
 	switch (params->fmt) {
 		case CT_DIRECT:
-			textureConvertDirect(params);
+			TxConvertDirect(params);
 			break;
 		case CT_4COLOR:
 		case CT_16COLOR:
 		case CT_256COLOR:
-			textureConvertPalette(params);
+			TxConvertIndexedOpaque(params);
 			break;
 		case CT_A3I5:
 		case CT_A5I3:
-			textureConvertTranslucent(params);
+			TxConvertIndexedTranslucent(params);
 			break;
 		case CT_4x4:
-			textureConvert4x4(params);
+			TxConvert4x4(params);
 			break;
 	}
-	textureRender(params->px, &params->dest->texels, &params->dest->palette, 0);
-	//textureRender outputs red and blue in the opposite order, so flip them here.
-	for (int i = 0; i < params->width * params->height; i++) {
-		COLOR32 p = params->px[i];
-		params->px[i] = REVERSE(p);
+
+	params->width = sourceWidth;
+	params->height = sourceHeight;
+	params->px = srcPx;
+	params->dest->texels.height = sourceHeight;
+	free(padded);
+
+	//copy name (null-terminated unless 16-char long)
+	if (params->fmt != CT_DIRECT) {
+		memset(params->dest->palette.name, 0, 16);
+		for (int i = 0; i < 16; i++) {
+			char c = params->pnam[i];
+			if (!c) break;
+			params->dest->palette.name[i] = c;
+		}
 	}
+
+	TxRender(params->px, sourceWidth, sourceHeight, &params->dest->texels, &params->dest->palette, 0);
+	
 	g_texCompressionFinished = 1;
 	if (params->callback) params->callback(params->callbackParam);
 	if (params->useFixedPalette) free(params->fixedPalette);
