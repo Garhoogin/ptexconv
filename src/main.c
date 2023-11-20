@@ -555,7 +555,6 @@ int _tmain(int argc, TCHAR **argv) {
 			useAlphaKey = 1;
 			i++;
 			if (i < argc) alphaKey = parseHexColor(argv[i]);
-			printf("Using alpha key %06X\n", alphaKey);
 		} else if (_tcscmp(arg, _T("-d")) == 0) {
 			i++;
 			if (i < argc) diffuse = _ttoi(argv[i]);
