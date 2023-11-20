@@ -79,6 +79,7 @@ const char *g_helpString = ""
 	"   -o      Specify output base name\n"
 	"   -ob     Output binary (default)\n"
 	"   -oc     Output as C header file\n"
+	"   -k  <c> Specify alpha key as 24-bit RRGGBB hex color\n"
 	"   -d  <n> Use dithering of n% (default 0%)\n"
 	"   -cm <n> Limit palette colors to n, regardless of bit depth\n"
 	"   -bb <n> Lightness-Color balance [1, 39] (default 20)\n"
@@ -468,6 +469,21 @@ const char *getFileNameFromPath(const char *path) {
 	return path + lastIndex + 1;
 }
 
+COLOR32 parseHexColor(const TCHAR *str) {
+	COLOR32 c = 0;
+	while (*str) {
+		char ch = *str;
+		c <<= 4;
+		
+		if (ch >= L'0' && ch <= L'9')      c |= (ch - L'0') + 0x0;
+		else if (ch >= L'A' && ch <= L'F') c |= (ch - L'A') + 0xA;
+		else if (ch >= L'a' && ch <= L'f') c |= (ch - L'a') + 0xA;
+		else c >>= 4;
+		str++;
+	}
+	return c;
+}
+
 int _tmain(int argc, TCHAR **argv) {
 	argc--;
 	argv++;
@@ -500,6 +516,8 @@ int _tmain(int argc, TCHAR **argv) {
 	int balance = BALANCE_DEFAULT;
 	int colorBalance = BALANCE_DEFAULT;
 	int enhanceColors = 0;
+	int useAlphaKey = 0;      //use alpha key?
+	COLOR32 alphaKey = 0;     //the alpha key
 
 	//BG settings
 	int nMaxChars = 1024;
@@ -533,6 +551,11 @@ int _tmain(int argc, TCHAR **argv) {
 			outputBinary = 1;
 		} else if (_tcscmp(arg, _T("-oc")) == 0) {
 			outputBinary = 0;
+		} else if (_tcscmp(arg, _T("-k")) == 0) {
+			useAlphaKey = 1;
+			i++;
+			if (i < argc) alphaKey = parseHexColor(argv[i]);
+			printf("Using alpha key %06X\n", alphaKey);
 		} else if (_tcscmp(arg, _T("-d")) == 0) {
 			i++;
 			if (i < argc) diffuse = _ttoi(argv[i]);
@@ -670,7 +693,21 @@ int _tmain(int argc, TCHAR **argv) {
 		puts("Could not read image file.");
 		return 1;
 	}
-
+	
+	//apply alpha key
+	if (useAlphaKey) {
+		for (int i = 0; i < width * height; i++) {
+			COLOR32 c = px[i];
+			if ((c & 0xFFFFFF) == (alphaKey & 0xFFFFFF)) px[i] = 0;
+		}
+	}
+	
+	//preprocess transparent pixels
+	for (int i = 0; i < width * height; i++) {
+		COLOR32 c = px[i];
+		if (((c >> 24) & 0xFF) == 0) px[i] = 0;
+	}
+	
 	if (mode == MODE_BG) {
 		//Generate BG
 		//fix up automatic flags
@@ -783,6 +820,13 @@ int _tmain(int argc, TCHAR **argv) {
 			//from existing palette+char
 			BgAssemble(px, width, height, depth, pal, nPalettes, existingChars, existingCharsSize / (8 * depth),
 				&screen, &screenSize, balance, colorBalance, enhanceColors);
+		}
+		
+		//for alpha keyed images, set color 0 to alpha key color
+		if (useAlphaKey && paletteOffset == 0) {
+			for (int i = paletteBase; i < paletteBase + nPalettes; i++) {
+				pal[i << depth] = ColorConvertToDS(alphaKey);
+			}
 		}
 
 		//prep data out for character
