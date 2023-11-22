@@ -471,17 +471,19 @@ const char *getFileNameFromPath(const char *path) {
 
 COLOR32 parseHexColor(const TCHAR *str) {
 	COLOR32 c = 0;
+	if (*str == _T('#')) str++;
+	
 	while (*str) {
 		char ch = *str;
 		c <<= 4;
 		
-		if (ch >= L'0' && ch <= L'9')      c |= (ch - L'0') + 0x0;
-		else if (ch >= L'A' && ch <= L'F') c |= (ch - L'A') + 0xA;
-		else if (ch >= L'a' && ch <= L'f') c |= (ch - L'a') + 0xA;
+		if      (ch >= _T('0') && ch <= _T('9')) c |= (ch - _T('0')) + 0x0;
+		else if (ch >= _T('A') && ch <= _T('F')) c |= (ch - _T('A')) + 0xA;
+		else if (ch >= _T('a') && ch <= _T('f')) c |= (ch - _T('a')) + 0xA;
 		else c >>= 4;
 		str++;
 	}
-	return c;
+	return (REVERSE(c)) & 0xFFFFFF;
 }
 
 int _tmain(int argc, TCHAR **argv) {
