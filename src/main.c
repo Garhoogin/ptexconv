@@ -104,7 +104,9 @@ const char *g_helpString = ""
 	"   -od     Output as DIB (disables character compression)\n"
 	"\n"
 	"Texture Options:\n"
-	"   -f      Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
+	"   -f  <f> Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
+	"   -cn     Do not limit output palette size for tex4x4 conversion\n"
+	"   -ct <n> Set tex4x4 palette compresion strength [0, 100] (default 0).\n"
 	"   -ot     Output as NNS TGA\n"
 	"   -fp <f> Specify fixed palette file\n\n"
 "";
@@ -538,6 +540,8 @@ int _tmain(int argc, TCHAR **argv) {
 
 	//Texture settings
 	int format = -1; //default, just guess
+	int noLimitPaletteSize = 0;
+	int tex4x4Threshold = 0;
 
 	for (int i = 0; i < argc; i++) {
 		const TCHAR *arg = argv[i];
@@ -592,6 +596,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (i < argc) nMaxChars = _ttoi(argv[i]);
 		} else if (_tcscmp(arg, _T("-cn")) == 0) {
 			nMaxChars = -1;
+			noLimitPaletteSize = 1; //for texture
 		} else if (_tcscmp(arg, _T("-ns")) == 0) {
 			outputScreen = 0;
 		} else if (_tcscmp(arg, _T("-od")) == 0) {
@@ -639,6 +644,9 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 		} else if (_tcscmp(arg, _T("-ot")) == 0) {
 			outputTga = 1;
+		} else if (_tcscmp(arg, _T("-ct")) == 0) {
+			i++;
+			if (i < argc) tex4x4Threshold = _ttoi(argv[i]);
 		} else if (arg[0] != _T('-')) { //not a switch
 			srcImage = arg;
 		}
@@ -1064,6 +1072,10 @@ int _tmain(int argc, TCHAR **argv) {
 					break;
 			}
 		}
+		if (format == CT_4x4 && noLimitPaletteSize) {
+			//set high palette size (effectively no limit)
+			nMaxColors = 32768;
+		}
 
 		int colorMaxes[] = { 0, 32, 4, 16, 256, 32768, 8, 0 };
 		int bppArray[] = { 0, 8, 2, 4, 8, 2, 8, 16 };
@@ -1090,7 +1102,7 @@ int _tmain(int argc, TCHAR **argv) {
 		params.width = width;
 		params.height = height;
 		params.px = px;
-		params.threshold = 0;
+		params.threshold = tex4x4Threshold;
 		params.balance = balance;
 		params.colorBalance = colorBalance;
 		params.enhanceColors = enhanceColors;
