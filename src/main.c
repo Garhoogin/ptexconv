@@ -85,7 +85,7 @@ const char *g_helpString = ""
 	"   -bb <n> Lightness-Color balance [1, 39] (default 20)\n"
 	"   -bc <n> Red-Green color balance [1, 39] (default 20)\n"
 	"   -be     Enhance colors in gradients (off by default)\n"
-	"   -s      Silent\n"
+	"   -v      Verbose\n"
 	"   -h      Display help text\n"
 	"\n"
 	"BG Options:\n"
@@ -510,7 +510,7 @@ int _tmain(int argc, TCHAR **argv) {
 	const TCHAR *srcImage = NULL;
 	const TCHAR *outBase = NULL;
 	int nMaxColors = -1; //default. 256 for BG, automatic for texture
-	int silent = 0;
+	int silent = 1;
 	int diffuse = 0;
 	int outputBinary = 1;
 	int outputTga = 0, outputDib = 0;
@@ -565,6 +565,8 @@ int _tmain(int argc, TCHAR **argv) {
 			if (i < argc) nMaxColors = _ttoi(argv[i]);
 		} else if (_tcscmp(arg, _T("-s")) == 0) {
 			silent = 1;
+		} else if (_tcscmp(arg, _T("-v")) == 0) {
+			silent = 0;
 		} else if (_tcscmp(arg, _T("-bb")) == 0) {
 			i++;
 			if (i < argc) balance = _ttoi(argv[i]);
@@ -787,8 +789,10 @@ int _tmain(int argc, TCHAR **argv) {
 			fclose(chrFp);
 		}
 
-		if (!silent) printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
-			depth, nPalettes, nMaxColors, nMaxChars, diffuse, paletteBase);
+		if (!silent) {
+			printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
+				depth, nPalettes, nMaxColors, nMaxChars, diffuse, paletteBase);
+		}
 
 		//perform appropriate generation of data.
 		unsigned char *chars = NULL;
