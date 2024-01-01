@@ -1212,6 +1212,11 @@ int TxConvert4x4(TxConversionParameters *params) {
 		nUsedColors = params->colorEntries;
 		memcpy(nnsPal, params->fixedPalette, params->colorEntries * 2);
 		g_texCompressionProgress += tilesX * tilesY;
+		
+		//set used pidx to 0 for all tiles (since we aren't using our "built palette")
+		for (int i = 0; i < tilesX * tilesY; i++) {
+			tileData[i].paletteIndex = 0; //keep mode
+		}
 	}
 	if (nUsedColors & 7) nUsedColors += 8 - (nUsedColors & 7);
 	if (nUsedColors < 16) nUsedColors = 16;

@@ -642,6 +642,9 @@ int _tmain(int argc, TCHAR **argv) {
 					else _tprintf(_T("Unknown texture format ") TC_STR _T(".\n"), fmtString);
 				}
 			}
+		} else if (_tcscmp(arg, _T("-fp")) == 0) {
+			i++;
+			if (i < argc) fixedPalette = argv[i];
 		} else if (_tcscmp(arg, _T("-ot")) == 0) {
 			outputTga = 1;
 		} else if (_tcscmp(arg, _T("-ct")) == 0) {
@@ -975,12 +978,12 @@ int _tmain(int argc, TCHAR **argv) {
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
 				paletteBase, width, height);
-			fprintf(fp, "#include <nds.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
+			fprintf(fp, "#include <stdint.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
 
 			if (!screenExclusive) {
 				//write character
 				{
-					fprintf(fp, "const unsigned short %s%s_char[] = {\n    ", prefix, bgName);
+					fprintf(fp, "const uint16_t %s%s_char[] = {\n    ", prefix, bgName);
 					unsigned short *schars = (unsigned short *) chars;
 					int nShort = charSize >> 1;
 					for (int i = 0; i < nShort; i++) {
@@ -992,7 +995,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 				//write palette
 				{
-					fprintf(fp, "const unsigned short %s%s_pal[] = {\n    ", prefix, bgName);
+					fprintf(fp, "const uint16_t %s%s_pal[] = {\n    ", prefix, bgName);
 					for (int i = 0; i < paletteOutSize; i++) {
 						fprintf(fp, "0x%04x,%c", pal[i + paletteOutBase], (i + 1) % 16 == 0 ? '\n' : ' ');
 						if (((i + 1) % 16) == 0 && (i < paletteOutSize - 1)) fprintf(fp, "    ");
@@ -1003,7 +1006,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			if (outputScreen) {
 				//write screen
-				fprintf(fp, "const unsigned short %s%s_screen[] = {\n    ", prefix, bgName);
+				fprintf(fp, "const uint16_t %s%s_screen[] = {\n    ", prefix, bgName);
 				int nShort = screenSize >> 1;
 				for (int i = 0; i < nShort; i++) {
 					fprintf(fp, "0x%04x,%c", screen[i], (i + 1) % 16 == 0 ? '\n' : ' ');
@@ -1020,13 +1023,17 @@ int _tmain(int argc, TCHAR **argv) {
 			//heading and declarations
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
 				paletteBase, width, height);
-			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
-			fprintf(fp, "//\n// Generated character data\n//\n");
-			fprintf(fp, "extern const unsigned short %s%s_char[%d];\n\n", prefix, bgName, charSize / 2);
-			fprintf(fp, "//\n// Generated palette data\n//\n");
-			fprintf(fp, "extern const unsigned short %s%s_pal[%d];\n\n", prefix, bgName, paletteOutSize);
-			fprintf(fp, "//\n// Generated screen data\n//\n");
-			fprintf(fp, "extern const unsigned short %s%s_screen[%d];\n\n", prefix, bgName, screenSize / 2);
+			fprintf(fp, "#pragma once\n\n#include <stdint.h>\n\n");
+			if (!screenExclusive) {
+				fprintf(fp, "//\n// Generated character data\n//\n");
+				fprintf(fp, "extern const uint16_t %s%s_char[%d];\n\n", prefix, bgName, charSize / 2);
+				fprintf(fp, "//\n// Generated palette data\n//\n");
+				fprintf(fp, "extern const uint16_t %s%s_pal[%d];\n\n", prefix, bgName, paletteOutSize);
+			}
+			if (outputScreen) {
+				fprintf(fp, "//\n// Generated screen data\n//\n");
+				fprintf(fp, "extern const uint16_t %s%s_screen[%d];\n\n", prefix, bgName, screenSize / 2);
+			}
 
 			fclose(fp);
 
@@ -1111,6 +1118,10 @@ int _tmain(int argc, TCHAR **argv) {
 		if (fixedPalette != NULL) {
 			size_t nRead;
 			FILE *fp = _tfopen(fixedPalette, _T("rb"));
+			if (fp == NULL) {
+				puts("Could not read fixed palette file.");
+				return 1;
+			}
 			fseek(fp, 0, SEEK_END);
 			int size = ftell(fp);
 			fseek(fp, 0, SEEK_SET);
@@ -1143,7 +1154,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
 			//output palette if not direct
-			if (format != CT_DIRECT) {
+			if (format != CT_DIRECT && fixedPalette == NULL) {
 				memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
 				fwrite(texture.palette.pal, 2, texture.palette.nColors, fp);
@@ -1205,11 +1216,11 @@ int _tmain(int argc, TCHAR **argv) {
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
 				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
-			fprintf(fp, "#include <nds.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
+			fprintf(fp, "#include <stdint.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
 
 			//write texel
 			{
-				fprintf(fp, "const unsigned short %s%s_texel[] = {\n    ", prefix, texName);
+				fprintf(fp, "const uint16_t %s%s_texel[] = {\n    ", prefix, texName);
 				unsigned short *txel = (unsigned short *) texture.texels.texel;
 				int nShort = texelSize >> 1;
 				for (int i = 0; i < nShort; i++) {
@@ -1221,7 +1232,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write index
 			if (format == CT_4x4) {
-				fprintf(fp, "const unsigned short %s%s_idx[] = {\n    ", prefix, texName);
+				fprintf(fp, "const uint16_t %s%s_idx[] = {\n    ", prefix, texName);
 				unsigned short *pidx = (unsigned short *) texture.texels.cmp;
 				int nShort = indexSize >> 1;
 				for (int i = 0; i < nShort; i++) {
@@ -1232,8 +1243,8 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			//write palette
-			if (format != CT_DIRECT) {
-				fprintf(fp, "const unsigned short %s%s_pal[] = {\n    ", prefix, texName);
+			if (format != CT_DIRECT && fixedPalette == NULL) {
+				fprintf(fp, "const uint16_t %s%s_pal[] = {\n    ", prefix, texName);
 				unsigned short *pcol = (unsigned short *) texture.palette.pal;
 				int nShort = texture.palette.nColors;
 				for (int i = 0; i < nShort; i++) {
@@ -1252,16 +1263,16 @@ int _tmain(int argc, TCHAR **argv) {
 			fp = _tfopen(nameBuffer, _T("wb"));
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
 				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
-			fprintf(fp, "#pragma once\n\n#include <nds.h>\n\n");
+			fprintf(fp, "#pragma once\n\n#include <stdint.h>\n\n");
 			fprintf(fp, "//\n// Generated texel data\n//\n");
-			fprintf(fp, "extern const unsigned short %s%s_texel[%d];\n\n", prefix, texName, texelSize / 2);
+			fprintf(fp, "extern const uint16_t %s%s_texel[%d];\n\n", prefix, texName, texelSize / 2);
 			if (format == CT_4x4) {
 				fprintf(fp, "//\n// Generated index data\n//\n");
-				fprintf(fp, "extern const unsigned short %s%s_idx[%d];\n\n", prefix, texName, texelSize / 4);
+				fprintf(fp, "extern const uint16_t %s%s_idx[%d];\n\n", prefix, texName, texelSize / 4);
 			}
-			if (format != CT_DIRECT) {
+			if (format != CT_DIRECT && fixedPalette == NULL) {
 				fprintf(fp, "//\n// Generated palette data\n//\n");
-				fprintf(fp, "extern const unsigned short %s%s_pal[%d];\n\n", prefix, texName, texture.palette.nColors);
+				fprintf(fp, "extern const uint16_t %s%s_pal[%d];\n\n", prefix, texName, texture.palette.nColors);
 			}
 			fclose(fp);
 
