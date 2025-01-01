@@ -3,10 +3,12 @@
 #include <math.h>
 #include <string.h>
 
+#include "compression.h"
 #include "texture.h"
 #include "texconv.h"
 #include "palette.h"
 #include "bggen.h"
+#include "grf.h"
 
 //ensure TCHAR and related macros are defined
 #ifdef _WIN32
@@ -66,7 +68,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.4.2.0"
+#define VERSION "1.5.0.0"
 
 const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -79,6 +81,7 @@ const char *g_helpString = ""
 	"   -o      Specify output base name\n"
 	"   -ob     Output binary (default)\n"
 	"   -oc     Output as C header file\n"
+	"   -og     Output as GRIT GRF file\n"
 	"   -k  <c> Specify alpha key as 24-bit RRGGBB hex color\n"
 	"   -d  <n> Use dithering of n% (default 0%)\n"
 	"   -cm <n> Limit palette colors to n, regardless of bit depth\n"
@@ -108,7 +111,12 @@ const char *g_helpString = ""
 	"   -cn     Do not limit output palette size for tex4x4 conversion\n"
 	"   -ct <n> Set tex4x4 palette compresion strength [0, 100] (default 0).\n"
 	"   -ot     Output as NNS TGA\n"
-	"   -fp <f> Specify fixed palette file\n\n"
+	"   -fp <f> Specify fixed palette file\n"
+	"\n"
+	"Compression Options:\n"
+	"   -clz    Use LZ compression (only valid for GRF output)\n"
+	"   -c8     Allow VRAM-unsafe compression\n"
+	"\n"
 "";
 
 const char *texHeader = ""
@@ -359,7 +367,7 @@ unsigned char *createBitmapData(int *indices, int width, int height, int depth, 
 	return data;
 }
 
-void writeBitmap(COLOR32 *palette, int paletteSize, int *indices, int width, int height, const TCHAR *path) {
+void writeBitmap(COLOR32 *palette, unsigned int paletteSize, int *indices, int width, int height, const TCHAR *path) {
 	FILE *fp = _tfopen(path, _T("wb"));
 
 	unsigned char header[] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -378,9 +386,9 @@ void writeBitmap(COLOR32 *palette, int paletteSize, int *indices, int width, int
 	};
 
 	int depth = (paletteSize <= 16) ? 4 : 8;
-	int paletteDataSize = paletteSize * 4;
+	unsigned int paletteDataSize = paletteSize * 4;
 	unsigned char *paletteData = (unsigned char *) calloc(paletteDataSize, 1);
-	for (int i = 0; i < paletteSize; i++) {
+	for (unsigned int i = 0; i < paletteSize; i++) {
 		COLOR32 c = palette[i];
 		paletteData[i * 4 + 0] = (c >> 16) & 0xFF;
 		paletteData[i * 4 + 1] = (c >> 8) & 0xFF;
@@ -431,6 +439,7 @@ void writeBitmap(COLOR32 *palette, int paletteSize, int *indices, int width, int
 	free(bmpData);
 	free(paletteData);
 }
+
 
 #ifdef _MSC_VER
 
@@ -515,7 +524,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int silent = 1;
 	int diffuse = 0;
 	int outputBinary = 1;
-	int outputTga = 0, outputDib = 0;
+	int outputTga = 0, outputDib = 0, outputGrf = 0;
 	int mode = MODE_BG;
 	int balance = BALANCE_DEFAULT;
 	int colorBalance = BALANCE_DEFAULT;
@@ -542,6 +551,11 @@ int _tmain(int argc, TCHAR **argv) {
 	int format = -1; //default, just guess
 	int noLimitPaletteSize = 0;
 	int tex4x4Threshold = 0;
+	
+	//Compression settings
+	CxCompressionPolicy compressionPolicy = 0;
+	compressionPolicy |= CX_COMPRESSION_NONE;
+	compressionPolicy |= CX_COMPRESSION_VRAM_SAFE;
 
 	for (int i = 0; i < argc; i++) {
 		const TCHAR *arg = argv[i];
@@ -557,6 +571,8 @@ int _tmain(int argc, TCHAR **argv) {
 			outputBinary = 1;
 		} else if (_tcscmp(arg, _T("-oc")) == 0) {
 			outputBinary = 0;
+		} else if (_tcscmp(arg, _T("-og")) == 0) {
+			outputGrf = 1;
 		} else if (_tcscmp(arg, _T("-k")) == 0) {
 			useAlphaKey = 1;
 			i++;
@@ -650,7 +666,16 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-ct")) == 0) {
 			i++;
 			if (i < argc) tex4x4Threshold = _ttoi(argv[i]);
-		} else if (arg[0] != _T('-')) { //not a switch
+		}
+		
+		//compression switch
+		else if (_tcscmp(arg, _T("-clz")) == 0) {
+			compressionPolicy |= CX_COMPRESSION_LZ;
+		} else if (_tcscmp(arg, _T("-c8")) == 0) {
+			compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;
+		}
+		
+		else if (arg[0] != _T('-')) { //not a switch
 			srcImage = arg;
 		}
 
@@ -860,7 +885,22 @@ int _tmain(int argc, TCHAR **argv) {
 			charSize = requiredCharSize;
 		}
 
-		if (outputBinary) {
+		if (outputGrf) {
+			//output GRIT GRF file
+			FILE *fp;
+			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 4 + 1, sizeof(TCHAR));
+			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
+			memcpy(nameBuffer + baseLength, _T(".grf"), (4 + 1) * sizeof(TCHAR));
+			
+			fp = _tfopen(nameBuffer, _T("wb"));
+			GrfWriteHeader(fp);
+			GrfBgWriteHdr(fp, depth, width, height, paletteOutSize);
+			GrfWritePltt(fp, pal, paletteOutSize, compressionPolicy);
+			GrfWriteGfx(fp, chars, charSize, compressionPolicy);
+			GrfWriteScr(fp, screen, screenSize, compressionPolicy);
+			GrfFinalize(fp);
+			fclose(fp);
+		} else if (outputBinary) {
 			//output NBFP, NBFC, NBFS.
 
 			//suffix the filename with .nbfp, .nbfc, .nbfs. So reserve 6 characters+base length.
@@ -895,7 +935,7 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (outputDib) { //output DIB file
 			//we physically cannot cram this many colors into a DIB palette
 			if (depth == 8 && nPalettes > 1) {
-				puts("DIB output for EXT BGs not supported.");
+				fprintf(stderr, "Cannot output DIB for EXT BG.");
 				return 1;
 			}
 
@@ -1140,8 +1180,22 @@ int _tmain(int argc, TCHAR **argv) {
 		int texelSize = TEXW(texture.texels.texImageParam) * TEXH(texture.texels.texImageParam) * bppArray[format] / 8;
 		int indexSize = (format == CT_4x4) ? (texelSize >> 1) : 0;
 
-		//if binary, output as NTFT, NTFI, NTFP.
-		if (outputBinary) {
+		if (outputGrf) {
+			//output GRIT GRF file
+			FILE *fp;
+			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 4 + 1, sizeof(TCHAR));
+			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
+			memcpy(nameBuffer + baseLength, _T(".grf"), (4 + 1) * sizeof(TCHAR));
+			
+			int fmt = FORMAT(texture.texels.texImageParam);
+			fp = _tfopen(nameBuffer, _T("wb"));
+			GrfWriteHeader(fp);
+			GrfTexWriteHdr(fp, fmt, width, height, texture.palette.nColors);
+			GrfWritePltt(fp, texture.palette.pal, texture.palette.nColors, compressionPolicy);
+			GrfWriteTexImage(fp, texture.texels.texel, texelSize, texture.texels.cmp, indexSize, compressionPolicy);
+			GrfFinalize(fp);
+			fclose(fp);
+		} else if (outputBinary) {
 			//suffix the filename with .ntft, .nfti, .nftp. So reserve 6 characters+base length.
 			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + NTFX_EXTLEN + 1, sizeof(TCHAR));
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
