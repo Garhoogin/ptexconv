@@ -115,6 +115,7 @@ const char *g_helpString = ""
 	"\n"
 	"Compression Options:\n"
 	"   -clz    Use LZ compression (only valid for GRF output)\n"
+	"   -clzf   Force use of LZ compression (only valid for GRF output)\n"
 	"   -c8     Allow VRAM-unsafe compression\n"
 	"\n"
 "";
@@ -671,6 +672,8 @@ int _tmain(int argc, TCHAR **argv) {
 		//compression switch
 		else if (_tcscmp(arg, _T("-clz")) == 0) {
 			compressionPolicy |= CX_COMPRESSION_LZ;
+		} else if (_tcscmp(arg, _T("-clzf")) == 0) {
+			compressionPolicy = (compressionPolicy & ~CX_COMPRESSION_TYPES_MASK) | CX_COMPRESSION_LZ;
 		} else if (_tcscmp(arg, _T("-c8")) == 0) {
 			compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;
 		}
