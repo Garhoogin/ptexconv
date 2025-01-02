@@ -70,7 +70,7 @@ long _ftol2_sse(float f) { //ugly hack
 
 #define VERSION "1.5.0.0"
 
-const char *g_helpString = ""
+static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
 	"\n"
 	"Usage: ptexconv <option...> image [option...]\n"
@@ -114,13 +114,13 @@ const char *g_helpString = ""
 	"   -fp <f> Specify fixed palette file\n"
 	"\n"
 	"Compression Options:\n"
-	"   -clz    Use LZ compression (only valid for GRF output)\n"
-	"   -clzf   Force use of LZ compression (only valid for GRF output)\n"
-	"   -c8     Allow VRAM-unsafe compression\n"
+	"   -cno    Enable use of no/dummy compression (valid for binary, C, GRF)\n"
+	"   -clz    Enable use of LZ compression       (valid for binary, C, GRF)\n"
+	"   -c8     Allow VRAM-unsafe compression      (valid for binary, C, GRF)\n"
 	"\n"
 "";
 
-const char *texHeader = ""
+static const char *texHeader = ""
 	"///////////////////////////////////////\n"
 	"// \n"
 	"// %s\n"
@@ -132,7 +132,7 @@ const char *texHeader = ""
 	"///////////////////////////////////////\n\n"
 "";
 
-const char *bgHeader = ""
+static const char *bgHeader = ""
 	"///////////////////////////////////////\n"
 	"// \n"
 	"// %s\n"
@@ -145,7 +145,7 @@ const char *bgHeader = ""
 	"///////////////////////////////////////\n\n"
 "";
 
-void getDate(int *month, int *day, int *year, int *hour, int *minute, int *am) {
+static void PtcGetDateTime(int *month, int *day, int *year, int *hour, int *minute, int *am) {
 
 #ifndef _MSC_VER
 	time_t tm = time(NULL);
@@ -166,11 +166,11 @@ void getDate(int *month, int *day, int *year, int *hour, int *minute, int *am) {
 	if (*hour == 0) *hour = 12;
 }
 
-void printHelp() {
+static void PtcPrintHelpMessage() {
 	puts(g_helpString);
 }
 
-COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHeight) {
+static COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHeight) {
 
 #ifdef _MSC_VER
 
@@ -195,7 +195,7 @@ COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHeight) {
 
 }
 
-int isTranslucent(COLOR32 *px, int nWidth, int nHeight) {
+static int isTranslucent(COLOR32 *px, int nWidth, int nHeight) {
 	for (int i = 0; i < nWidth * nHeight; i++) {
 		int a = px[i] >> 24;
 		if (a >= 5 && a <= 250) return 1;
@@ -203,7 +203,7 @@ int isTranslucent(COLOR32 *px, int nWidth, int nHeight) {
 	return 0;
 }
 
-int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
+static int PtcAutoSelectTextureFormat(COLOR32 *px, int nWidth, int nHeight) {
 	//Guess a good format for the data. Default to 4x4.
 	int fmt = CT_4x4;
 
@@ -244,22 +244,11 @@ int guessFormat(COLOR32 *px, int nWidth, int nHeight) {
 	return fmt;
 }
 
-const char *getVersion(void) {
+const char *PtcGetVersionString(void) {
 	return VERSION;
 }
 
-int max16Len(char *str) {
-	int len = 0;
-	for (int i = 0; i < 16; i++) {
-		char c = str[i];
-		if (!c) return len;
-		len++;
-	}
-	return len;
-}
-
-//lifted almost straight from NitroPaint
-void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
+void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	FILE *fp = _tfopen(name, _T("wb"));
 
 	int width = TEXW(texels->texImageParam);
@@ -298,7 +287,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	//palette (if applicable)
 	if (FORMAT(texels->texImageParam) != CT_DIRECT) {
 		fwrite("nns_pnam", 8, 1, fp);
-		uint32_t pnamLength = max16Len(palette->name) + 0xC;
+		uint32_t pnamLength = strnlen(palette->name, 16) + 0xC;
 		fwrite(&pnamLength, 4, 1, fp);
 		fwrite(palette->name, 1, pnamLength - 0xC, fp);
 
@@ -313,7 +302,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	unsigned char gnam[] = { 'n', 'n', 's', '_', 'g', 'n', 'a', 'm', 20, 0, 0, 0, 'p', 't', 'e', 'x', 'c', 'o', 'n', 'v' };
 	fwrite(gnam, sizeof(gnam), 1, fp);
 
-	const char *version = getVersion();
+	const char *version = PtcGetVersionString();
 	unsigned char gver[] = { 'n', 'n', 's', '_', 'g', 'v', 'e', 'r', 0, 0, 0, 0 };
 	*(uint32_t *) (gver + 8) = strlen(version) + 0xC;
 	fwrite(gver, sizeof(gver), 1, fp);
@@ -336,39 +325,7 @@ void writeNitroTGA(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	free(pixels);
 }
 
-unsigned char *createBitmapData(int *indices, int width, int height, int depth, int *dataSize) {
-	int strideLength = (width * depth + 7) / 8;
-	if (strideLength & 3) strideLength = (strideLength + 3) & ~3;
-
-	int imageSize = strideLength * height;
-	*dataSize = imageSize;
-
-	int posShift = (depth == 4) ? 1 : 0;
-
-	unsigned char *data = (unsigned char *) calloc(imageSize, 1);
-	for (int y = 0; y < height; y++) {
-		unsigned char *row = data + y * strideLength;
-
-		for (int x = 0; x < width; x++) {
-			unsigned char old = row[x >> posShift];
-			int index = x + (height - 1 - y) * width;
-			if (depth == 8) {
-				row[x] = indices[index];
-			} else {
-				int idx = indices[index];
-				if (x & 1) {
-					row[x >> posShift] = old | idx;
-				} else {
-					row[x >> posShift] = idx << 4;
-				}
-			}
-		}
-	}
-
-	return data;
-}
-
-void writeBitmap(COLOR32 *palette, unsigned int paletteSize, int *indices, int width, int height, const TCHAR *path) {
+void PtcWriteBitmap(COLOR32 *palette, unsigned int paletteSize, int *indices, int width, int height, const TCHAR *path) {
 	FILE *fp = _tfopen(path, _T("wb"));
 
 	unsigned char header[] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -459,7 +416,7 @@ float mylog2(float d) { //UGLY!
 #endif
 
 //based on suggestions for color counts by SGC, interpolated with a log function
-int chooseColorCount(int bWidth, int bHeight) {
+static int PtcAutoSelectTex4x4ColorCount(int bWidth, int bHeight) {
 	int area = bWidth * bHeight;
 
 	//for textures smaller than 256x256, use 8*sqrt(area)
@@ -473,15 +430,7 @@ int chooseColorCount(int bWidth, int bHeight) {
 	return (int) (256 * (log2f((float) area) - 10));
 }
 
-const char *getFileNameFromPath(const char *path) {
-	int lastIndex = -1;
-	for (unsigned int i = 0; i < strlen(path); i++) {
-		if (path[i] == '/' || path[i] == '\\') lastIndex = i;
-	}
-	return path + lastIndex + 1;
-}
-
-COLOR32 parseHexColor(const TCHAR *str) {
+static COLOR32 PtcParseHexColor24(const TCHAR *str) {
 	COLOR32 c = 0;
 	if (*str == _T('#')) str++;
 	
@@ -498,6 +447,110 @@ COLOR32 parseHexColor(const TCHAR *str) {
 	return (REVERSE(c)) & 0xFFFFFF;
 }
 
+
+// ----- file output routines
+
+static void *PtcCompressByPolicy(const void *ptr, unsigned int size, unsigned int *compressedSize, CxCompressionPolicy policy) {
+	//if policy has no compression bits set, return a copy of the buffer.
+	if ((policy & CX_COMPRESSION_TYPES_MASK) == 0) {
+		void *copy = malloc(size);
+		if (copy == NULL) return NULL;
+		
+		memcpy(copy, ptr, size);
+		*compressedSize = size;
+		return copy;
+	}
+	
+	//else, pass to compressor
+	return CxCompress(ptr, size, compressedSize, policy);
+}
+
+static int PtcEmitBinaryData(FILE *fp, const void *buf, size_t len, CxCompressionPolicy compression) {
+	unsigned int complen;
+	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
+	if (comp == NULL) return 0;
+	
+	//write binary file data
+	int status = fwrite(comp, 1, complen, fp) == complen;
+	free(comp);
+	return status;
+}
+
+static int PtcEmitTextData(FILE *fp, FILE *fpHeader, const char *prefix, const char *name, const char *suffix, const void *buf, size_t len, unsigned int unit, CxCompressionPolicy compression) {
+	unsigned int complen;
+	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
+	if (comp == NULL) return 0;
+	
+	if (compression & CX_COMPRESSION_TYPES_MASK) {
+		//force unit=4 for alignment of compression header
+		unit = 4;
+	}
+	
+	//data formatting parameters
+	const char *format = "0x%02X,%c";
+	const char *type = "uint8_t";
+	switch (unit) {
+		default:
+		case 1:
+			format = "0x%02X,%c";
+			type = "uint8_t";
+			unit = 1;
+			break;
+		case 2:
+			format = "0x%04X,%c";
+			type = "uint16_t";
+			unit = 2;
+			break;
+		case 4:
+			format = "0x%08X,%c";
+			type = "uint32_t";
+			unit = 4;
+			break;
+	}
+	
+	size_t nUnit = (complen + unit - 1) / unit;
+	unsigned int nCols = 32 / unit;
+	
+	
+	fprintf(fp, "const %s %s%s%s[] = ", type, prefix, name, suffix);
+	fprintf(fp, "{\n    ");
+	fprintf(fpHeader, "extern const %s %s%s%s[%d];\n", type, prefix, name, suffix, (int) nUnit);
+	
+	size_t i = 0, j = 0;
+	const unsigned char *ptr = comp;
+	while (complen) {
+		unsigned int thisUnit = unit;
+		if (thisUnit > complen) thisUnit = complen;
+		
+		uint32_t dataUnit = 0;
+		for (j = 0; j < thisUnit; j++) {
+			dataUnit |= ptr[j] << (j * 8);
+		}
+		
+		fprintf(fp, format, dataUnit, (i + 1) % nCols == 0 ? '\n' : ' ');
+		if (((i + 1) % nCols) == 0 && (i < nUnit - 1)) fprintf(fp, "    ");
+		
+		complen -= thisUnit;
+		ptr += thisUnit;
+		i++;
+	}
+	
+	if (nUnit % nCols) fprintf(fp, "\n");
+	fprintf(fp, "};\n");
+	
+	free(comp);
+	return 1;
+}
+
+
+
+// ----- main command line routine
+
+#define PTC_FAIL_IF(cond,...)  if (cond) { \
+	fprintf(stderr, __VA_ARGS__);          \
+	return 1;                              \
+}
+
 int _tmain(int argc, TCHAR **argv) {
 	argc--;
 	argv++;
@@ -505,14 +558,14 @@ int _tmain(int argc, TCHAR **argv) {
 	//check arguments
 	if (argc < 1) {
 		//print help
-		printHelp();
+		PtcPrintHelpMessage();
 		return 0;
 	}
 
 	//help?
 	for (int i = 0; i < argc; i++) {
 		if (_tcscmp(argv[i], _T("-h")) == 0) {
-			printHelp();
+			PtcPrintHelpMessage();
 			return 0;
 		}
 	}
@@ -555,7 +608,6 @@ int _tmain(int argc, TCHAR **argv) {
 	
 	//Compression settings
 	CxCompressionPolicy compressionPolicy = 0;
-	compressionPolicy |= CX_COMPRESSION_NONE;
 	compressionPolicy |= CX_COMPRESSION_VRAM_SAFE;
 
 	for (int i = 0; i < argc; i++) {
@@ -577,7 +629,7 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-k")) == 0) {
 			useAlphaKey = 1;
 			i++;
-			if (i < argc) alphaKey = parseHexColor(argv[i]);
+			if (i < argc) alphaKey = PtcParseHexColor24(argv[i]);
 		} else if (_tcscmp(arg, _T("-d")) == 0) {
 			i++;
 			if (i < argc) diffuse = _ttoi(argv[i]);
@@ -670,11 +722,14 @@ int _tmain(int argc, TCHAR **argv) {
 		}
 		
 		//compression switch
-		else if (_tcscmp(arg, _T("-clz")) == 0) {
+		else if (_tcscmp(arg, _T("-cno")) == 0) {
+			//allow compression to use dummy compression
+			compressionPolicy |= CX_COMPRESSION_NONE;
+		} else if (_tcscmp(arg, _T("-clz")) == 0) {
+			//allow compression to use LZ compression
 			compressionPolicy |= CX_COMPRESSION_LZ;
-		} else if (_tcscmp(arg, _T("-clzf")) == 0) {
-			compressionPolicy = (compressionPolicy & ~CX_COMPRESSION_TYPES_MASK) | CX_COMPRESSION_LZ;
 		} else if (_tcscmp(arg, _T("-c8")) == 0) {
+			//allow compression to use VRAM unsafe compression
 			compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;
 		}
 		
@@ -689,52 +744,21 @@ int _tmain(int argc, TCHAR **argv) {
 	}
 
 	//check for errors
-	if (srcImage == NULL) {
-		puts("No source image specified.");
-		return 1;
-	}
-	if (outBase == NULL) {
-		puts("No output name specified.");
-		return 1;
-	}
-	if (depth != 4 && depth != 8) {
-		printf("Invaid number of bits specified %d.\n", depth);
-		return 1;
-	}
-	if (diffuse < 0 || diffuse > 100) {
-		printf("Diffuse amount out of range: %d\n", diffuse);
-		return 1;
-	}
-	if (mode == MODE_BG && ((depth == 4 && nMaxColors > 16) || (depth == 8 && nMaxColors > 256))) {
-		printf("Too many output colors specified: %d\n", nMaxColors);
-		return 1;
-	}
-	if (mode == MODE_BG && screenExclusive && (srcChrFile == NULL || srcPalFile == NULL)) {
-		puts("Palette and character file required for this.");
-		return 1;
-	}
-	if (mode == MODE_BG && outputTga) {
-		printf("Cannot output NNS TGA for BGs.\n");
-		return 1;
-	}
-	if (mode == MODE_TEXTURE && outputDib) {
-		printf("Cannot output DIB for textures.\n");
-		return 1;
-	}
+	PTC_FAIL_IF(srcImage == NULL, "No source image specified.\n");
+	PTC_FAIL_IF(outBase == NULL, "No output name specified.\n");
+	PTC_FAIL_IF(depth != 4 && depth != 8, "Invalid bit depth specified (%d).\n", depth);
+	PTC_FAIL_IF(diffuse < 0 || diffuse > 100, "Diffuse amount out of range (%d)\n", diffuse);
+	PTC_FAIL_IF(mode == MODE_BG && (nMaxColors > (1 << depth)), "Too many output colors specified: %d\n", nMaxColors);
+	PTC_FAIL_IF(mode == MODE_BG && screenExclusive && (srcChrFile == NULL || srcPalFile == NULL), "Palette and character file required for this.\n");
+	PTC_FAIL_IF(mode == MODE_BG && outputTga, "Cannot output NNS TGA for BGs.\n");
+	PTC_FAIL_IF(mode == MODE_TEXTURE && outputDib, "Cannot output DIB for textures.\n");
 
 	//MBS copy of base
 	int baseLength = _tcslen(outBase);
-	char *mbsBase = (char *) calloc(baseLength + 1, sizeof(char));
-	for (int i = 0; i < baseLength + 1; i++) {
-		mbsBase[i] = (char) outBase[i];
-	}
 
 	int width, height;
 	COLOR32 *px = tgdipReadImage(srcImage, &width, &height);
-	if (px == NULL) {
-		puts("Could not read image file.");
-		return 1;
-	}
+	PTC_FAIL_IF(px == NULL, "Could not read image file.\n");
 	
 	//apply alpha key
 	if (useAlphaKey) {
@@ -895,6 +919,9 @@ int _tmain(int argc, TCHAR **argv) {
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
 			memcpy(nameBuffer + baseLength, _T(".grf"), (4 + 1) * sizeof(TCHAR));
 			
+			//GRF requires one compression type specified
+			if (!(compressionPolicy & CX_COMPRESSION_TYPES_MASK)) compressionPolicy |= CX_COMPRESSION_NONE;
+			
 			fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
 			GrfBgWriteHdr(fp, depth, width, height, paletteOutSize);
@@ -914,13 +941,13 @@ int _tmain(int argc, TCHAR **argv) {
 
 			if (!screenExclusive) {
 				fp = _tfopen(srcPalFile == NULL ? nameBuffer : srcPalFile, _T("wb"));
-				fwrite(pal + paletteOutBase, sizeof(COLOR), paletteOutSize, fp);
+				PtcEmitBinaryData(fp, pal + paletteOutBase, paletteOutSize * sizeof(COLOR), compressionPolicy);
 				fclose(fp);
 				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), srcPalFile == NULL ? nameBuffer : srcPalFile);
 
 				memcpy(nameBuffer + baseLength, NBFC_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(srcChrFile == NULL ? nameBuffer : srcChrFile, _T("wb"));
-				fwrite(chars, charSize, 1, fp);
+				PtcEmitBinaryData(fp, chars, charSize, compressionPolicy);
 				fclose(fp);
 				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), srcChrFile == NULL ? nameBuffer : srcChrFile);
 			}
@@ -928,7 +955,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (outputScreen) {
 				memcpy(nameBuffer + baseLength, NBFS_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
-				fwrite(screen, screenSize, 1, fp);
+				PtcEmitBinaryData(fp, screen, screenSize, compressionPolicy);
 				fclose(fp);
 				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			}
@@ -978,7 +1005,7 @@ int _tmain(int argc, TCHAR **argv) {
 			for (int i = 0; i < palSize / 2; i++) {
 				palette32[i] = ColorConvertFromDS(pal[i]);
 			}
-			writeBitmap(palette32, palSize / 2, indexBuffer, width, height, nameBuffer);
+			PtcWriteBitmap(palette32, palSize / 2, indexBuffer, width, height, nameBuffer);
 
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
@@ -993,7 +1020,7 @@ int _tmain(int argc, TCHAR **argv) {
 			memcpy(nameBuffer + baseLength, _T(".c"), 3 * sizeof(TCHAR));
 
 			int month, day, year, hour, minute, am;
-			getDate(&month, &day, &year, &hour, &minute, &am);
+			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
 
 			//find BG name
 			int lastSepIndex = -1;
@@ -1019,66 +1046,46 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//write
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
+			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
+			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
+			
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
 				paletteBase, width, height);
-			fprintf(fp, "#include <stdint.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
+			fprintf(fpHeader, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
+				paletteBase, width, height);
+			fprintf(fp, "#include <stdint.h>\n\n");
+			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
 
 			if (!screenExclusive) {
 				//write character
 				{
-					fprintf(fp, "const uint16_t %s%s_char[] = {\n    ", prefix, bgName);
-					unsigned short *schars = (unsigned short *) chars;
-					int nShort = charSize >> 1;
-					for (int i = 0; i < nShort; i++) {
-						fprintf(fp, "0x%04x,%c", schars[i], (i + 1) % 16 == 0 ? '\n' : ' ');
-						if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
-					}
-					fprintf(fp, "};\n\n");
+					fprintf(fpHeader, "//\n// Generated character data\n//\n");
+					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_char", chars, charSize, 2, compressionPolicy);
+					
+					fprintf(fp, "\n");
+					fprintf(fpHeader, "\n");
 				}
 
 				//write palette
 				{
-					fprintf(fp, "const uint16_t %s%s_pal[] = {\n    ", prefix, bgName);
-					for (int i = 0; i < paletteOutSize; i++) {
-						fprintf(fp, "0x%04x,%c", pal[i + paletteOutBase], (i + 1) % 16 == 0 ? '\n' : ' ');
-						if (((i + 1) % 16) == 0 && (i < paletteOutSize - 1)) fprintf(fp, "    ");
-					}
-					fprintf(fp, "};\n\n");
+					fprintf(fpHeader, "//\n// Generated palette data\n//\n");
+					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_pal", pal, paletteOutSize * 2, 2, compressionPolicy);
+					
+					fprintf(fp, "\n");
+					fprintf(fpHeader, "\n");
 				}
 			}
 
 			if (outputScreen) {
 				//write screen
-				fprintf(fp, "const uint16_t %s%s_screen[] = {\n    ", prefix, bgName);
-				int nShort = screenSize >> 1;
-				for (int i = 0; i < nShort; i++) {
-					fprintf(fp, "0x%04x,%c", screen[i], (i + 1) % 16 == 0 ? '\n' : ' ');
-					if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
-				}
-				fprintf(fp, "};\n\n");
+				fprintf(fpHeader, "//\n// Generated screen data\n//\n");
+				PtcEmitTextData(fp, fpHeader, prefix, bgName, "_screen", screen, screenSize, 2, compressionPolicy);
+				
+				fprintf(fp, "\n");
+				fprintf(fpHeader, "\n");
 			}
 			fclose(fp);
-
-			//header
-			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
-			fp = _tfopen(nameBuffer, _T("wb"));
-
-			//heading and declarations
-			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
-				paletteBase, width, height);
-			fprintf(fp, "#pragma once\n\n#include <stdint.h>\n\n");
-			if (!screenExclusive) {
-				fprintf(fp, "//\n// Generated character data\n//\n");
-				fprintf(fp, "extern const uint16_t %s%s_char[%d];\n\n", prefix, bgName, charSize / 2);
-				fprintf(fp, "//\n// Generated palette data\n//\n");
-				fprintf(fp, "extern const uint16_t %s%s_pal[%d];\n\n", prefix, bgName, paletteOutSize);
-			}
-			if (outputScreen) {
-				fprintf(fp, "//\n// Generated screen data\n//\n");
-				fprintf(fp, "extern const uint16_t %s%s_screen[%d];\n\n", prefix, bgName, screenSize / 2);
-			}
-
-			fclose(fp);
+			fclose(fpHeader);
 
 			free(nameBuffer);
 			free(bgName);
@@ -1095,7 +1102,7 @@ int _tmain(int argc, TCHAR **argv) {
 			outputBinary = 0;
 		}
 		if (format == -1) {
-			format = guessFormat(px, width, height);
+			format = PtcAutoSelectTextureFormat(px, width, height);
 		}
 		if (nMaxColors == -1) {
 			switch (format) {
@@ -1118,7 +1125,7 @@ int _tmain(int argc, TCHAR **argv) {
 					nMaxColors = 0;
 					break;
 				case CT_4x4:
-					nMaxColors = chooseColorCount(width, height);
+					nMaxColors = PtcAutoSelectTex4x4ColorCount(width, height);
 					break;
 			}
 		}
@@ -1190,6 +1197,9 @@ int _tmain(int argc, TCHAR **argv) {
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
 			memcpy(nameBuffer + baseLength, _T(".grf"), (4 + 1) * sizeof(TCHAR));
 			
+			//GRF requires one compression type specified
+			if (!(compressionPolicy & CX_COMPRESSION_TYPES_MASK)) compressionPolicy |= CX_COMPRESSION_NONE;
+			
 			int fmt = FORMAT(texture.texels.texImageParam);
 			fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
@@ -1206,7 +1216,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//output texel always
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
-			fwrite(texture.texels.texel, 1, texelSize, fp);
+			PtcEmitBinaryData(fp, texture.texels.texel, texelSize, compressionPolicy);
 			fclose(fp);
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
@@ -1214,7 +1224,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (format != CT_DIRECT && fixedPalette == NULL) {
 				memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
-				fwrite(texture.palette.pal, 2, texture.palette.nColors, fp);
+				PtcEmitBinaryData(fp, texture.palette.pal, texture.palette.nColors * sizeof(COLOR), compressionPolicy);
 				fclose(fp);
 				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			}
@@ -1223,7 +1233,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (format == CT_4x4) {
 				memcpy(nameBuffer + baseLength, NTFI_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
-				fwrite(texture.texels.cmp, 1, indexSize, fp);
+				PtcEmitBinaryData(fp, texture.texels.cmp, indexSize, compressionPolicy);
 				fclose(fp);
 				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			}
@@ -1235,7 +1245,7 @@ int _tmain(int argc, TCHAR **argv) {
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
 			memcpy(nameBuffer + baseLength, _T(".tga"), 5 * sizeof(TCHAR));
 
-			writeNitroTGA(nameBuffer, &texture.texels, &texture.palette);
+			PtcWriteNnsTga(nameBuffer, &texture.texels, &texture.palette);
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			free(nameBuffer);
 		} else {
@@ -1246,7 +1256,7 @@ int _tmain(int argc, TCHAR **argv) {
 			memcpy(nameBuffer + baseLength, _T(".c"), 3 * sizeof(TCHAR));
 
 			int month, day, year, hour, minute, am;
-			getDate(&month, &day, &year, &hour, &minute, &am);
+			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
 
 			//find texture name
 			int lastSepIndex = -1;
@@ -1271,75 +1281,56 @@ int _tmain(int argc, TCHAR **argv) {
 			char *prefix = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "tex_" : "";
 
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
+			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
+			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
+			
+			
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
 				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
-			fprintf(fp, "#include <stdint.h>\n\n#include \"%s.h\"\n\n", getFileNameFromPath(mbsBase));
+			fprintf(fp, "#include <stdint.h>\n\n");
+			
+			fprintf(fpHeader, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
+				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
+			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
 
 			//write texel
 			{
-				fprintf(fp, "const uint16_t %s%s_texel[] = {\n    ", prefix, texName);
-				unsigned short *txel = (unsigned short *) texture.texels.texel;
-				int nShort = texelSize >> 1;
-				for (int i = 0; i < nShort; i++) {
-					fprintf(fp, "0x%04x,%c", txel[i], (i + 1) % 16 == 0 ? '\n' : ' ');
-					if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
-				}
-				fprintf(fp, "};\n\n");
+				fprintf(fpHeader, "//\n// Generated texel data\n//\n");
+				PtcEmitTextData(fp, fpHeader, prefix, texName, "_texel", texture.texels.texel, texelSize, 2, compressionPolicy);
+				
+				fprintf(fp, "\n");
+				fprintf(fpHeader, "\n");
 			}
 
 			//write index
 			if (format == CT_4x4) {
-				fprintf(fp, "const uint16_t %s%s_idx[] = {\n    ", prefix, texName);
-				unsigned short *pidx = (unsigned short *) texture.texels.cmp;
-				int nShort = indexSize >> 1;
-				for (int i = 0; i < nShort; i++) {
-					fprintf(fp, "0x%04x,%c", pidx[i], (i + 1) % 16 == 0 ? '\n' : ' ');
-					if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
-				}
-				fprintf(fp, "};\n\n");
+				fprintf(fpHeader, "//\n// Generated index data\n//\n");
+				PtcEmitTextData(fp, fpHeader, prefix, texName, "_idx", texture.texels.cmp, indexSize, 2, compressionPolicy);
+				
+				fprintf(fp, "\n");
+				fprintf(fpHeader, "\n");
 			}
 
 			//write palette
 			if (format != CT_DIRECT && fixedPalette == NULL) {
-				fprintf(fp, "const uint16_t %s%s_pal[] = {\n    ", prefix, texName);
-				unsigned short *pcol = (unsigned short *) texture.palette.pal;
-				int nShort = texture.palette.nColors;
-				for (int i = 0; i < nShort; i++) {
-					fprintf(fp, "0x%04x,%c", pcol[i], (i + 1) % 16 == 0 ? '\n' : ' ');
-					if (((i + 1) % 16) == 0 && (i < nShort - 1)) fprintf(fp, "    ");
-				}
-				if (nShort & 0xF) fprintf(fp, "\n"); //force this to be on a new line
-				fprintf(fp, "};\n\n");
+				fprintf(fpHeader, "//\n// Generated palette data\n//\n");
+				PtcEmitTextData(fp, fpHeader, prefix, texName, "_pal", texture.palette.pal, texture.palette.nColors * 2, 2, compressionPolicy);
+				
+				fprintf(fp, "\n");
+				fprintf(fpHeader, "\n");
 			}
+			
 			fclose(fp);
+			fclose(fpHeader);
 
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
-
-			//write header
-			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
-			fp = _tfopen(nameBuffer, _T("wb"));
-			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
-				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
-			fprintf(fp, "#pragma once\n\n#include <stdint.h>\n\n");
-			fprintf(fp, "//\n// Generated texel data\n//\n");
-			fprintf(fp, "extern const uint16_t %s%s_texel[%d];\n\n", prefix, texName, texelSize / 2);
-			if (format == CT_4x4) {
-				fprintf(fp, "//\n// Generated index data\n//\n");
-				fprintf(fp, "extern const uint16_t %s%s_idx[%d];\n\n", prefix, texName, texelSize / 4);
-			}
-			if (format != CT_DIRECT && fixedPalette == NULL) {
-				fprintf(fp, "//\n// Generated palette data\n//\n");
-				fprintf(fp, "extern const uint16_t %s%s_pal[%d];\n\n", prefix, texName, texture.palette.nColors);
-			}
-			fclose(fp);
-
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+			
 			free(texName);
 			free(nameBuffer);
 			if (params.fixedPalette != NULL) free(params.fixedPalette);
 		}
 	}
-	free(mbsBase);
 
 	return 0;
 }
