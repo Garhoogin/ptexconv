@@ -111,6 +111,7 @@ static const char *g_helpString = ""
 	"   -cn     Do not limit output palette size for tex4x4 conversion\n"
 	"   -ct <n> Set tex4x4 palette compresion strength [0, 100] (default 0).\n"
 	"   -ot     Output as NNS TGA\n"
+	"   -tt     Trim the texture in the T axis if its height is not a power of 2\n"
 	"   -fp <f> Specify fixed palette file\n"
 	"\n"
 	"Compression Options:\n"
@@ -259,10 +260,10 @@ void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	unsigned char header[] = { 0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,
 		'N', 'N', 'S', '_', 'T', 'g', 'a', ' ', 'V', 'e', 'r', ' ', '1', '.', '0', 0, 0, 0, 0, 0 };
 	*(uint16_t *) (header + 0xC) = width;
-	*(uint16_t *) (header + 0xE) = height;
-	*(uint32_t *) (header + 0x22) = sizeof(header) + width * height * 4;
+	*(uint16_t *) (header + 0xE) = texels->height;
+	*(uint32_t *) (header + 0x22) = sizeof(header) + width * texels->height * 4;
 	fwrite(header, sizeof(header), 1, fp);
-	fwrite(pixels, width * height * 4, 1, fp);
+	fwrite(pixels, width * texels->height * 4, 1, fp);
 
 	const char *fstr = TxNameFromTexFormat(FORMAT(texels->texImageParam));
 	fwrite("nns_frmt", 8, 1, fp);
@@ -465,6 +466,30 @@ static void *PtcCompressByPolicy(const void *ptr, unsigned int size, unsigned in
 	return CxCompress(ptr, size, compressedSize, policy);
 }
 
+static void PtcTrimTextureData(TEXELS *texels) {
+	//if height equals TEXIMAGE_PARAM height, do nothing
+	if (texels->height == TEXH(texels->texImageParam)) return;
+	
+	//for all but 4x4, we may trim the texture data by cutting rows off.
+	int format = FORMAT(texels->texImageParam);
+	if (format != CT_4x4) {
+		//trim by rows
+		unsigned int bpps[] = { 0, 8, 2, 4, 8, 2, 8, 16 };
+		unsigned int stride = TEXW(texels->texImageParam) * bpps[format] / 8;
+		
+		texels->texel = realloc(texels->texel, stride * texels->height);
+	} else {
+		//trim by block of 4
+		unsigned int trimHeight = (texels->height + 3) / 4;
+		unsigned int strideTxel = TEXW(texels->texImageParam);   // stride of 4 rows of pixels
+		unsigned int stridePidx = strideTxel / 2;
+		
+		texels->texel = realloc(texels->texel, strideTxel * trimHeight);
+		texels->cmp = realloc(texels->cmp, stridePidx * trimHeight);
+		texels->height = trimHeight;
+	}
+}
+
 static int PtcEmitBinaryData(FILE *fp, const void *buf, size_t len, CxCompressionPolicy compression) {
 	unsigned int complen;
 	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
@@ -582,29 +607,30 @@ int _tmain(int argc, TCHAR **argv) {
 	int mode = MODE_BG;
 	int balance = BALANCE_DEFAULT;
 	int colorBalance = BALANCE_DEFAULT;
-	int enhanceColors = 0;
-	int useAlphaKey = 0;      //use alpha key?
-	COLOR32 alphaKey = 0;     //the alpha key
+	int enhanceColors = 0;         // enhance largely used colors
+	int useAlphaKey = 0;           // use alpha key?
+	COLOR32 alphaKey = 0;          // the alpha key color
 
 	//BG settings
-	int nMaxChars = 1024;
-	int depth = 8;
-	int nPalettes = 1;
-	int paletteBase = 0;
-	int charBase = 0;
-	int explicitCharBase = 0; //charBase explicitly set via command line?
-	int outputScreen = 1;
-	int compressPalette = 0;  //Only output target palettes/colors?
-	int paletteOffset = 0;    //Offset from start of hw palette
-	int screenExclusive = 0;  //Output only screen file?
-	const TCHAR *srcPalFile = NULL; //palette file to overwrite
-	const TCHAR *srcChrFile = NULL; //character file to overwrite
+	int nMaxChars = 1024;           // maximum character count for BG generator
+	int depth = 8;                  // graphics bit depth for BG generator
+	int nPalettes = 1;              // number of palettes for BG generator
+	int paletteBase = 0;            // palette base index for BG generator
+	int charBase = 0;               // character base address for BG generator
+	int explicitCharBase = 0;       // charBase explicitly set via command line?
+	int outputScreen = 1;           // output BG screen data?
+	int compressPalette = 0;        // only output target palettes/colors?
+	int paletteOffset = 0;          // offset from start of hw palette
+	int screenExclusive = 0;        // output only screen file?
+	const TCHAR *srcPalFile = NULL; // palette file to read/overwrite
+	const TCHAR *srcChrFile = NULL; // character file to read/overwrite
 
 
 	//Texture settings
-	int format = -1; //default, just guess
-	int noLimitPaletteSize = 0;
-	int tex4x4Threshold = 0;
+	int format = -1;                // texture format (default: judge automatically)
+	int noLimitPaletteSize = 0;     // disable 4x4 compression palette size limit (up to 32k colors)
+	int tex4x4Threshold = 0;        // 4x4 compression threshold of mergence
+	int trimT = 0;                  // trim texture in the T axis if not a power of 2 in height
 	
 	//Compression settings
 	CxCompressionPolicy compressionPolicy = 0;
@@ -719,6 +745,8 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-ct")) == 0) {
 			i++;
 			if (i < argc) tex4x4Threshold = _ttoi(argv[i]);
+		} else if (_tcscmp(arg, _T("-tt")) == 0) {
+			trimT = 1;
 		}
 		
 		//compression switch
@@ -1187,7 +1215,17 @@ int _tmain(int argc, TCHAR **argv) {
 		}
 
 		TxConvert(&params);
-		int texelSize = TEXW(texture.texels.texImageParam) * TEXH(texture.texels.texImageParam) * bppArray[format] / 8;
+		
+		//trim texture data by height
+		if (!outputTga && trimT) {
+			//NNS TGA texture data shall not be trimmed
+			texture.texels.height = height;
+			PtcTrimTextureData(&texture.texels);
+		} else {
+			//no trim height
+			texture.texels.height = TEXH(texture.texels.texImageParam);
+		}
+		int texelSize = TEXW(texture.texels.texImageParam) * texture.texels.height * bppArray[format] / 8;
 		int indexSize = (format == CT_4x4) ? (texelSize >> 1) : 0;
 
 		if (outputGrf) {
@@ -1249,7 +1287,6 @@ int _tmain(int argc, TCHAR **argv) {
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			free(nameBuffer);
 		} else {
-
 			//suffix the filename with .c, So reserve 3 characters+base length.
 			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 3, sizeof(TCHAR));
 			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
@@ -1284,13 +1321,12 @@ int _tmain(int argc, TCHAR **argv) {
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
 			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
 			
-			
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
-				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
+				TEXW(texture.texels.texImageParam), height);
 			fprintf(fp, "#include <stdint.h>\n\n");
 			
 			fprintf(fpHeader, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(format), texture.palette.nColors,
-				TEXW(texture.texels.texImageParam), TEXH(texture.texels.texImageParam));
+				TEXW(texture.texels.texImageParam), height);
 			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
 
 			//write texel
