@@ -39,9 +39,9 @@ static float BgiTileDifferenceFlip(RxReduction *reduction, BgTile *t1, BgTile *t
 	return (float) err;
 }
 
-static float BgiTileDifference(RxReduction *reduction, BgTile *t1, BgTile *t2, unsigned char *flipMode) {
+static float BgiTileDifference(RxReduction *reduction, BgTile *t1, BgTile *t2, int useTileFlip, unsigned char *flipMode) {
 	float err = BgiTileDifferenceFlip(reduction, t1, t2, 0);
-	if (err == 0) {
+	if (!useTileFlip || err == 0) {
 		*flipMode = 0;
 		return err;
 	}
@@ -197,7 +197,7 @@ static void BgiTdlReset(BgTileDiffList *list) {
 	list->minDiff = 1e32;
 }
 
-int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int nBits, int nMaxChars, COLOR32 *palette, int paletteSize, int nPalettes,
+int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, int nBits, int nMaxChars, COLOR32 *palette, int paletteSize, int nPalettes,
 	int paletteBase, int paletteOffset, int balance, int colorBalance, int *progress) {
 	int nChars = nTiles;
 	float *diffBuff = (float *) calloc(nTiles * nTiles, sizeof(float));
@@ -210,7 +210,7 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int nBits, int nMax
 		for (int j = 0; j < i; j++) {
 			BgTile *t2 = tiles + j;
 
-			diffBuff[i + j * nTiles] = BgiTileDifference(reduction, t1, t2, &flips[i + j * nTiles]);
+			diffBuff[i + j * nTiles] = BgiTileDifference(reduction, t1, t2, useTileFlip, &flips[i + j * nTiles]);
 			diffBuff[j + i * nTiles] = diffBuff[i + j * nTiles];
 			flips[j + i * nTiles] = flips[i + j * nTiles];
 		}
@@ -567,8 +567,8 @@ void BgGenerate(COLOR *pOutPalette, unsigned char **pOutChars, unsigned short **
 	//match tiles to each other
 	int nChars = nTiles;
 	if (characterCompression) {
-		nChars = BgPerformCharacterCompression(tiles, nTiles, nBits, nMaxChars, palette, paletteSize, nPalettes, paletteBase,
-			paletteOffset, balance, colorBalance, progress2);
+		nChars = BgPerformCharacterCompression(tiles, nTiles, params->characterSetting.tileFlip, nBits, nMaxChars, palette,
+			paletteSize, nPalettes, paletteBase, paletteOffset, balance, colorBalance, progress2);
 	}
 
 	COLOR32 *blocks = (COLOR32 *) calloc(nChars, 64 * sizeof(COLOR32));

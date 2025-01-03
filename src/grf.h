@@ -67,6 +67,7 @@ int GrfWriteHdr(
 int GrfBgWriteHdr(
 	FILE                 *fp,          // file handle
 	int                   depth,       // BG graphics bit depth
+	int                   scrUnit,     // BG screen data unit size in bits
 	int                   width,       // BG screen width in pixels
 	int                   height,      // BG screen height in pixels
 	int                   paletteSize  // BG palette size in colors

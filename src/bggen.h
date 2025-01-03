@@ -52,6 +52,7 @@ typedef struct BgCharacterSetting_ {
 	int compress;                     //enables character compression
 	int nMax;                         //max characters if compression enabled
 	int alignment;                    //rounds up character count to a multiple of this
+	int tileFlip;                     //use tile flipping
 } BgCharacterSetting;
 
 typedef struct BgGenerateParameters_ {
@@ -82,7 +83,7 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 // combined, the bit depth and palette settings are used to finalize the
 // result in the tile array. progress must not be NULL, and ranges from 0-1000.
 //
-int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int nBits, int nMaxChars, COLOR32 *palette, int paletteSize, int nPalettes,
+int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, int nBits, int nMaxChars, COLOR32 *palette, int paletteSize, int nPalettes,
 	int paletteBase, int paletteOffset, int balance, int colorBalance, int *progress);
 
 /****************************************************************************\

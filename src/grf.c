@@ -77,12 +77,13 @@ int GrfWriteHdr(
 int GrfBgWriteHdr(
 	FILE  *fp,
 	int    depth,
+	int    scrUnit,
 	int    width,
 	int    height,
 	int    paletteSize
 ) {
 	//write BG header for GRF
-	return GrfWriteHdr(fp, depth, 16, 0, paletteSize, 8, 8, 0, 0, width, height);
+	return GrfWriteHdr(fp, depth, scrUnit, 0, paletteSize, 8, 8, 0, 0, width, height);
 }
 
 int GrfTexWriteHdr(

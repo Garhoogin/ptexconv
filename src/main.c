@@ -93,6 +93,8 @@ static const char *g_helpString = ""
 	"\n"
 	"BG Options:\n"
 	"   -b  <n> Specify output bit depth {4, 8}\n"
+	"   -ba     Output BG data as affine\n"
+	"   -bA     Output BG data as affine extended\n"
 	"   -p  <n> Use n palettes in output\n"
 	"   -po <n> Use per palette offset n\n"
 	"   -pc     Use compressed palette\n"
@@ -567,6 +569,51 @@ static int PtcEmitTextData(FILE *fp, FILE *fpHeader, const char *prefix, const c
 	return 1;
 }
 
+static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, unsigned int tilesY, int affine, int affineExt, unsigned int *pOutSize) {
+	//affine EXT: return copy of data
+	if (affineExt) {
+		void *cpy = (void *) malloc(tilesX * tilesY * sizeof(uint16_t));
+		memcpy(cpy, src, tilesX * tilesY * sizeof(uint16_t));
+		*pOutSize = tilesX * tilesY * sizeof(uint16_t);
+		return cpy;
+	}
+	
+	//affine: trim upper 8 bits of each halfword
+	if (affine) {
+		uint8_t *cpy = (void *) malloc(tilesX * tilesY);
+		for (unsigned int i = 0; i < tilesX * tilesY; i++) {
+			cpy[i] = src[i] & 0xFF;
+		}
+		*pOutSize = tilesX * tilesY;
+		return cpy;
+	}
+	
+	//else, text BG. Swizzle the data into 256x256 pixel panels.
+	uint16_t *cpy = malloc(tilesX * tilesY * sizeof(uint16_t));
+
+	//split data into panels.
+	unsigned int nPnlX = (tilesX + 31) / 32;
+	unsigned int nPnlY = (tilesY + 31) / 32;
+
+	unsigned int outpos = 0;
+	for (unsigned int pnlY = 0; pnlY < nPnlY; pnlY++) {
+		for (unsigned int pnlX = 0; pnlX < nPnlX; pnlX++) {
+			for (unsigned int y = 0; y < 32; y++) {
+				for (unsigned int x = 0; x < 32; x++) {
+
+					if ((pnlY * 32 + y) < tilesY && (pnlX * 32 + x) < tilesX) {
+						cpy[outpos++] = src[(pnlX * 32 + x) + (pnlY * 32 + y) * tilesX];
+					}
+
+				}
+			}
+		}
+	}
+	
+	*pOutSize = tilesX * tilesY * sizeof(uint16_t);
+	return cpy;
+}
+
 
 
 // ----- main command line routine
@@ -607,9 +654,9 @@ int _tmain(int argc, TCHAR **argv) {
 	int mode = MODE_BG;
 	int balance = BALANCE_DEFAULT;
 	int colorBalance = BALANCE_DEFAULT;
-	int enhanceColors = 0;         // enhance largely used colors
-	int useAlphaKey = 0;           // use alpha key?
-	COLOR32 alphaKey = 0;          // the alpha key color
+	int enhanceColors = 0;          // enhance largely used colors
+	int useAlphaKey = 0;            // use alpha key?
+	COLOR32 alphaKey = 0;           // the alpha key color
 
 	//BG settings
 	int nMaxChars = 1024;           // maximum character count for BG generator
@@ -622,6 +669,9 @@ int _tmain(int argc, TCHAR **argv) {
 	int compressPalette = 0;        // only output target palettes/colors?
 	int paletteOffset = 0;          // offset from start of hw palette
 	int screenExclusive = 0;        // output only screen file?
+	int bgAffine = 0;               // output affine mode BG
+	int bgAffineExt = 0;            // output affine EXT mode BG
+	int bgTileFlip = 1;             // use tile flip modes in BG
 	const TCHAR *srcPalFile = NULL; // palette file to read/overwrite
 	const TCHAR *srcChrFile = NULL; // character file to read/overwrite
 
@@ -680,6 +730,19 @@ int _tmain(int argc, TCHAR **argv) {
 		else if (_tcscmp(arg, _T("-b")) == 0) {
 			i++;
 			if (i < argc) depth = _ttoi(argv[i]);
+		} else if (_tcscmp(arg, _T("-ba")) == 0) {
+			//BG generate in affine mode
+			bgAffine = 1;     // set BG format
+			bgAffineExt = 0;  // ^ 
+			depth = 8;        // must be in 8 bit depth
+			nPalettes = 1;    // use only one palette
+			bgTileFlip = 0;   // disable tile flip
+			if (nMaxChars > 256) nMaxChars = 256; // adjust default max char count
+		} else if (_tcscmp(arg, _T("-bA")) == 0) {
+			//BG generate in affine EXT mode
+			bgAffine = 0;     // set BG format
+			bgAffineExt = 1;  // ^
+			depth = 8;        // must be in 8 bit depth
 		} else if (_tcscmp(arg, _T("-p")) == 0) {
 			i++;
 			if (i < argc) nPalettes = _ttoi(argv[i]);
@@ -774,12 +837,28 @@ int _tmain(int argc, TCHAR **argv) {
 	//check for errors
 	PTC_FAIL_IF(srcImage == NULL, "No source image specified.\n");
 	PTC_FAIL_IF(outBase == NULL, "No output name specified.\n");
-	PTC_FAIL_IF(depth != 4 && depth != 8, "Invalid bit depth specified (%d).\n", depth);
 	PTC_FAIL_IF(diffuse < 0 || diffuse > 100, "Diffuse amount out of range (%d)\n", diffuse);
-	PTC_FAIL_IF(mode == MODE_BG && (nMaxColors > (1 << depth)), "Too many output colors specified: %d\n", nMaxColors);
-	PTC_FAIL_IF(mode == MODE_BG && screenExclusive && (srcChrFile == NULL || srcPalFile == NULL), "Palette and character file required for this.\n");
-	PTC_FAIL_IF(mode == MODE_BG && outputTga, "Cannot output NNS TGA for BGs.\n");
-	PTC_FAIL_IF(mode == MODE_TEXTURE && outputDib, "Cannot output DIB for textures.\n");
+	
+	if (mode == MODE_BG) {
+		//BG mode paramter checks
+		int bgText = !(bgAffine || bgAffineExt);
+		PTC_FAIL_IF(outputTga,                                    "NNS TGA output is not applicable for BG.\n");
+		PTC_FAIL_IF(depth != 4 && depth != 8,                     "Invalid bit depth specified for BG (%d).\n", depth);
+		PTC_FAIL_IF(nMaxColors > (1 << depth),                    "Invalid color count per palette specified for BG of %d bit depth (%d).\n", depth, nMaxColors);
+		PTC_FAIL_IF(paletteOffset >= (1 << depth),                "Invalid palette offset specified (%d).\n", paletteOffset);
+		PTC_FAIL_IF(nPalettes > 16,                               "Invalid palette count specified for BG (%d).\n", nPalettes);
+		PTC_FAIL_IF(paletteBase >= 16,                            "Invalid palette base specified for BG (%d).\n", paletteBase);
+		PTC_FAIL_IF(nMaxChars > 1024 || nMaxChars < -1,           "Invalid maximum character count specified for BG (%d).\n", nMaxChars);
+		PTC_FAIL_IF((bgAffine || bgAffineExt) && depth != 8,      "Affine mode BG must use 8 bit depth.\n");
+		PTC_FAIL_IF((bgAffine               ) && nMaxChars > 256, "Affine mode BG may use no more than 256 characters.\n");
+		PTC_FAIL_IF((bgAffine               ) && nPalettes > 1,   "Affine mode BG may use no more than 1 color palette.\n");
+		PTC_FAIL_IF((bgAffine               ) && paletteBase > 1, "Affine mode BG may use no more than 1 color palette.\n");
+		PTC_FAIL_IF(bgText && depth == 8 && nPalettes > 1,        "Text mode 8bpp BG may use only one palette. Consider affine extended BG?\n");
+		PTC_FAIL_IF(screenExclusive && (srcChrFile == NULL || srcPalFile == NULL), "Palette and character file required for this command.\n");
+	} else if (mode == MODE_TEXTURE) {
+		//texture mode paramter checks
+		PTC_FAIL_IF(outputDib,                                    "DIB output is not applicable for texture.\n");
+	}
 
 	//MBS copy of base
 	int baseLength = _tcslen(outBase);
@@ -811,6 +890,7 @@ int _tmain(int argc, TCHAR **argv) {
 		if (depth == 8 && nMaxColors > 256) nMaxColors = 256;
 		if (paletteBase > 15) paletteBase = 15;
 		if (paletteBase + nPalettes > 16) nPalettes = 16 - paletteBase;
+		if (bgAffine && nMaxChars != 1 && nMaxChars > 256) nMaxChars = 256;
 
 		if (outputDib) {
 			outputScreen = 0;
@@ -910,12 +990,23 @@ int _tmain(int argc, TCHAR **argv) {
 			params.characterSetting.compress = (nMaxChars != -1);
 			params.characterSetting.nMax = nMaxChars;
 			params.characterSetting.alignment = 1;
+			params.characterSetting.tileFlip = bgTileFlip;
 			BgGenerate(pal, &chars, &screen, &palSize, &charSize, &screenSize, px, width, height,
 				&params, &p1, &p1max, &p2, &p2max);
 		} else {
 			//from existing palette+char
 			BgAssemble(px, width, height, depth, pal, nPalettes, existingChars, existingCharsSize / (8 * depth),
 				&screen, &screenSize, balance, colorBalance, enhanceColors);
+		}
+		
+		//convert BG format
+		{
+			unsigned int convSize = 0;
+			unsigned short *conv = PtcConvertBgScreenData(screen, width / 8, height / 8, bgAffine, bgAffineExt, &convSize);
+			
+			free(screen);
+			screen = conv;
+			screenSize = convSize;
 		}
 		
 		//for alpha keyed images, set color 0 to alpha key color
@@ -952,7 +1043,7 @@ int _tmain(int argc, TCHAR **argv) {
 			
 			fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
-			GrfBgWriteHdr(fp, depth, width, height, paletteOutSize);
+			GrfBgWriteHdr(fp, depth, bgAffine ? 8 : 16, width, height, paletteOutSize);
 			GrfWritePltt(fp, pal, paletteOutSize, compressionPolicy);
 			GrfWriteGfx(fp, chars, charSize, compressionPolicy);
 			GrfWriteScr(fp, screen, screenSize, compressionPolicy);
