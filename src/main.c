@@ -140,7 +140,7 @@ static const char *bgHeader = ""
 	"// \n"
 	"// %s\n"
 	"// Generated %d/%d/%d %d:%02d %cM\n"
-	"// Bit depth: %d\n"
+	"// Format: %s (%dbpp)\n"
 	"// Palettes: %d\n"
 	"// Palette base: %d\n"
 	"// Size: %dx%d\n"
@@ -1168,9 +1168,11 @@ int _tmain(int argc, TCHAR **argv) {
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
 			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
 			
-			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
+			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
+				bgAffine ? "Affine" : (bgAffineExt ? "Affine EXT" : "Text"), depth, nPalettes,
 				paletteBase, width, height);
-			fprintf(fpHeader, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P', depth, nPalettes,
+			fprintf(fpHeader, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
+				bgAffine ? "Affine" : (bgAffineExt ? "Affine EXT" : "Text"), depth, nPalettes,
 				paletteBase, width, height);
 			fprintf(fp, "#include <stdint.h>\n\n");
 			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");

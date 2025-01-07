@@ -18,7 +18,6 @@ typedef enum GrfGfxAttr_ {
 	GRF_GFX_ATTR_TEX4x4    = 0x82         // tex4x4
 } GrfGfxAttr;
 
-
 typedef struct GrfFileHeader_ {
 	uint32_t signature;                   // RIFF file signature
 	uint32_t fileSize;                    // RIFF file size
