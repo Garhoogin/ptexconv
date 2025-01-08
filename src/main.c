@@ -124,6 +124,7 @@ static const char *g_helpString = ""
 	"   -ch4    Enable use of 4-bit Huffman compression  (valid for binary, C, GRF)\n"
 	"   -ch8    Enable use of 4-bit Huffman compression  (valid for binary, C, GRF)\n"
 	"   -crl    Enable use of RLE compression            (valid for binary, C, GRF)\n"
+	"   -clzx   Enable use of LZ extended compression    (valid for binary, C, GRF)\n"
 	"   -c8     Allow VRAM-unsafe compression            (valid for binary, C, GRF)\n"
 	"\n"
 "";
@@ -839,6 +840,9 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-crl")) == 0) {
 			//allow compression to use RLE compression
 			compressionPolicy |= CX_COMPRESSION_RLE;
+		} else if (_tcscmp(arg, _T("-clzx")) == 0) {
+			//allow compression to use LZ extended compression
+			compressionPolicy |= CX_COMPRESSION_LZX;
 		} else if (_tcscmp(arg, _T("-c8")) == 0) {
 			//allow compression to use VRAM unsafe compression
 			compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;

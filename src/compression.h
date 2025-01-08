@@ -19,14 +19,15 @@ typedef enum GrfCompressionPolicy_ {
 	CX_COMPRESSION_HUFFMAN4          = 0x04,   // enable emitting 4-bit Huffman compressed data
 	CX_COMPRESSION_HUFFMAN8          = 0x08,   // enable emitting 8-bit Huffman compressed data
 	CX_COMPRESSION_RLE               = 0x10,   // enable emitting RLE compressed data
+	CX_COMPRESSION_LZX               = 0x20,   // enable emitting LZ extended data
 	CX_COMPRESSION_VRAM_SAFE         = 0x80    // ensure VRAM-safe compression is applied
 } CxCompressionPolicy;
 
 
-#define CX_COMPRESSION_TYPES_MASK      0x1F
+#define CX_COMPRESSION_TYPES_MASK      0x3F
 #define CX_COMPRESSION_FLAGS_MASK      0x80
 
-#define CX_NUM_COMPRESSION_TYPES          5
+#define CX_NUM_COMPRESSION_TYPES          6
 
 
 

@@ -26,22 +26,10 @@
 
 //struct for mapping an LZ graph
 typedef struct CxiLzNode_ {
-	uint16_t distance;         // distance of node if reference
-	uint16_t length;           // length of node
+	uint32_t distance : 15;    // distance of node if reference
+	uint32_t length   : 17;    // length of node
 	uint32_t weight;           // weight of node
 } CxiLzNode;
-
-//struct for representing tokenized LZ data
-typedef struct CxiLzToken_ {
-	uint8_t isReference;
-	union {
-		uint8_t symbol;
-		struct {
-			int16_t length;
-			int16_t distance;
-		};
-	};
-} CxiLzToken;
 
 
 static unsigned int CxiCompareMemory(const unsigned char *b1, const unsigned char *b2, unsigned int nMax, unsigned int nAbsoluteMax) {
@@ -261,6 +249,185 @@ unsigned char *CxCompressLZ16(const unsigned char *buffer, unsigned int size, un
 unsigned char *CxCompressLZ8(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize) {
 	//no consideration of minimum length
 	return CxCompressLZCommon(buffer, size, compressedSize, LZ_MIN_DISTANCE);
+}
+
+
+// ----- LZX Compression Routines
+
+#define LZX_MIN_DISTANCE        0x01   // minimum distance per LZX encoding
+#define LZX_MIN_SAFE_DISTANCE   0x02   // minimum safe distance per SDK LZX bug
+#define LZX_MAX_DISTANCE      0x1000   // maximum distance per LZX encoding
+#define LZX_MIN_LENGTH          0x03   // minimum length per LZX encoding
+#define LZX_MAX_LENGTH       0x10110   // maximum length per LZX encoding
+#define LZX_MIN_LENGTH_1        0x03   // size bracket 1: min length
+#define LZX_MAX_LENGTH_1        0x10   // size bracket 1: max length
+#define LZX_MIN_LENGTH_2        0x11   // size bracket 2: min length
+#define LZX_MAX_LENGTH_2       0x110   // size bracket 2: max length
+#define LZX_MIN_LENGTH_3       0x111   // size bracket 3: min length
+#define LZX_MAX_LENGTH_3     0x10110   // size bracket 3: max length
+
+static inline int CxiLzxNodeIsReference(const CxiLzNode *node) {
+	return node->length >= LZX_MIN_LENGTH;
+}
+
+//length of compressed data output by LZ token
+static inline unsigned int CxiLzxTokenCost(unsigned int length) {
+	unsigned int nBytesToken;
+	if (length >= LZX_MIN_LENGTH_3) {
+		nBytesToken = 4;
+	} else if (length >= LZX_MIN_LENGTH_2) {
+		nBytesToken = 3;
+	} else if (length >= LZX_MIN_LENGTH_1) {
+		nBytesToken = 2;
+	} else {
+		nBytesToken = 1;
+	}
+	return 1 + nBytesToken * 8;
+}
+
+
+static unsigned char *CxCompressLZXCommon(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize, unsigned int minDistance) {
+	//create node list
+	CxiLzNode *nodes = (CxiLzNode *) calloc(size, sizeof(CxiLzNode));
+	if (nodes == NULL) return NULL;
+
+	//work backwards from the end of file
+	unsigned int pos = size;
+	while (pos) {
+		//decrement
+		pos--;
+
+		//get node at pos
+		CxiLzNode *node = nodes + pos;
+
+		//optimization: limit max search length towards end of file
+		unsigned int maxSearchLen = LZX_MAX_LENGTH_3;
+		if (maxSearchLen > (size - pos)) maxSearchLen = size - pos;
+		if (maxSearchLen < LZX_MIN_LENGTH) maxSearchLen = 1;
+
+		//search for largest LZ string match
+		unsigned int len, dist;
+		if (maxSearchLen >= LZX_MIN_LENGTH) {
+			len = CxiSearchLZ(buffer + pos, size, pos, minDistance, LZX_MAX_DISTANCE, maxSearchLen, &dist);
+		} else {
+			//dummy
+			len = 1, dist = 1;
+		}
+
+		//if len < LZX_MIN_LENGTH, treat as literal byte node.
+		if (len == 0 || len < LZX_MIN_LENGTH) {
+			len = 1;
+		}
+
+		//if node takes us to the end of file, set weight to cost of this node.
+		if ((pos + len) == size) {
+			//token takes us to the end of the file, its weight equals this token cost.
+			node->length = len;
+			node->distance = dist;
+			node->weight = CxiLzxTokenCost(len);
+		} else {
+			//else, search LZ matches from here down.
+			unsigned int weightBest = UINT_MAX;
+			unsigned int lenBest = 1;
+			while (len) {
+				//measure cost
+				unsigned int weightNext = nodes[pos + len].weight;
+				unsigned int weight = CxiLzxTokenCost(len) + weightNext;
+				if (weight < weightBest) {
+					lenBest = len;
+					weightBest = weight;
+				}
+
+				//decrement length w.r.t. length discontinuity
+				len--;
+				if (len != 0 && len < LZX_MIN_LENGTH) len = 1;
+			}
+
+			//put node
+			node->length = lenBest;
+			node->distance = dist;
+			node->weight = weightBest;
+		}
+	}
+
+	//from here on, we have a direct path to the end of file. All we need to do is traverse it.
+
+	//get max compressed size
+	unsigned int maxCompressed = 4 + size + (size + 7) / 8;
+
+	//encode LZ data
+	unsigned char *buf = (unsigned char *) calloc(maxCompressed, 1);
+	if (buf == NULL) {
+		free(nodes);
+		return NULL;
+	}
+	
+	unsigned char *bufpos = buf;
+	*(uint32_t *) (bufpos) = (size << 8) | 0x11;
+	bufpos += 4;
+
+	CxiLzNode *curnode = &nodes[0];
+
+	unsigned int srcpos = 0;
+	while (srcpos < size) {
+		uint8_t head = 0;
+		unsigned char *headpos = bufpos++;
+
+		for (unsigned int i = 0; i < 8 && srcpos < size; i++) {
+			unsigned int length = curnode->length;
+			unsigned int distance = curnode->distance;
+
+			if (CxiLzxNodeIsReference(curnode)) {
+				//node is reference
+				head |= 1 << (7 - i);
+				
+				uint32_t enc = (distance - LZX_MIN_DISTANCE) & 0xFFF;
+				if (length >= LZX_MIN_LENGTH_3) {
+					enc |= ((length - LZX_MIN_LENGTH_3) << 12) | (1 << 28);
+					*(bufpos++) = (enc >> 24) & 0xFF;
+					*(bufpos++) = (enc >> 16) & 0xFF;
+					*(bufpos++) = (enc >>  8) & 0xFF;
+					*(bufpos++) = (enc >>  0) & 0xFF;
+				} else if (length >= LZX_MIN_LENGTH_2) {
+					enc |= ((length - LZX_MIN_LENGTH_2) << 12) | (0 << 20);
+					*(bufpos++) = (enc >> 16) & 0xFF;
+					*(bufpos++) = (enc >>  8) & 0xFF;
+					*(bufpos++) = (enc >>  0) & 0xFF;
+				} else if (length >= LZX_MIN_LENGTH_1) {
+					enc |= ((length - LZX_MIN_LENGTH_1 + 2) << 12);
+					*(bufpos++) = (enc >>  8) & 0xFF;
+					*(bufpos++) = (enc >>  0) & 0xFF;
+				}
+			} else {
+				//node is literal byte
+				*(bufpos++) = buffer[srcpos];
+			}
+
+			srcpos += length; //remember: nodes correspond to byte positions
+			curnode += length;
+		}
+
+		//put head byte
+		*headpos = head;
+	}
+
+	//nodes no longer needed
+	free(nodes);
+
+	unsigned int outSize = bufpos - buf;
+	*compressedSize = outSize;
+	return realloc(buf, outSize); //reduce buffer size
+}
+
+
+unsigned char *CxCompressLZX16(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize) {
+	//consider standard faulty VRAM-safe decompression routine
+	return CxCompressLZXCommon(buffer, size, compressedSize, LZX_MIN_SAFE_DISTANCE);
+}
+
+unsigned char *CxCompressLZX8(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize) {
+	//no consideration of minimum length
+	return CxCompressLZXCommon(buffer, size, compressedSize, LZX_MIN_DISTANCE);
 }
 
 
@@ -724,6 +891,15 @@ unsigned char *CxCompress(const unsigned char *data, unsigned int size, unsigned
 			outs[nTypes] = CxCompressLZ16(data, size, &sizes[nTypes]);
 		} else {
 			outs[nTypes] = CxCompressLZ8(data, size, &sizes[nTypes]);
+		}
+		if (outs[nTypes] == NULL) goto Error;
+		nTypes++;
+	}
+	if (compression & CX_COMPRESSION_LZX) {
+		if (compression & CX_COMPRESSION_VRAM_SAFE) {
+			outs[nTypes] = CxCompressLZX16(data, size, &sizes[nTypes]);
+		} else {
+			outs[nTypes] = CxCompressLZX8(data, size, &sizes[nTypes]);
 		}
 		if (outs[nTypes] == NULL) goto Error;
 		nTypes++;
