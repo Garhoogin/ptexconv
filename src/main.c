@@ -117,9 +117,14 @@ static const char *g_helpString = ""
 	"   -fp <f> Specify fixed palette file\n"
 	"\n"
 	"Compression Options:\n"
-	"   -cno    Enable use of no/dummy compression (valid for binary, C, GRF)\n"
-	"   -clz    Enable use of LZ compression       (valid for binary, C, GRF)\n"
-	"   -c8     Allow VRAM-unsafe compression      (valid for binary, C, GRF)\n"
+	"   -cbios  Enable use of all BIOS compression types (valid for binary, C, GRF)\n"
+	"   -cno    Enable use of no/dummy compression       (valid for binary, C, GRF)\n"
+	"   -clz    Enable use of LZ compression             (valid for binary, C, GRF)\n"
+	"   -ch     Enable use of any Huffman compression    (valid for binary, C, GRF)\n"
+	"   -ch4    Enable use of 4-bit Huffman compression  (valid for binary, C, GRF)\n"
+	"   -ch8    Enable use of 4-bit Huffman compression  (valid for binary, C, GRF)\n"
+	"   -crl    Enable use of RLE compression            (valid for binary, C, GRF)\n"
+	"   -c8     Allow VRAM-unsafe compression            (valid for binary, C, GRF)\n"
 	"\n"
 "";
 
@@ -813,12 +818,27 @@ int _tmain(int argc, TCHAR **argv) {
 		}
 		
 		//compression switch
-		else if (_tcscmp(arg, _T("-cno")) == 0) {
+		else if (_tcscmp(arg, _T("-cbios")) == 0) {
+			//allow all BIOS compression types
+			compressionPolicy |= CX_COMPRESSION_LZ | CX_COMPRESSION_RLE | CX_COMPRESSION_HUFFMAN4 | CX_COMPRESSION_HUFFMAN8;
+		} else if (_tcscmp(arg, _T("-cno")) == 0) {
 			//allow compression to use dummy compression
 			compressionPolicy |= CX_COMPRESSION_NONE;
 		} else if (_tcscmp(arg, _T("-clz")) == 0) {
 			//allow compression to use LZ compression
 			compressionPolicy |= CX_COMPRESSION_LZ;
+		} else if (_tcscmp(arg, _T("-ch")) == 0) {
+			//allow compression to use either 4-bit or 8-bit Huffman compression
+			compressionPolicy |= CX_COMPRESSION_HUFFMAN4 | CX_COMPRESSION_HUFFMAN8;
+		} else if (_tcscmp(arg, _T("-ch4")) == 0) {
+			//allow compression to use 4-bit Huffman compression
+			compressionPolicy |= CX_COMPRESSION_HUFFMAN4;
+		} else if (_tcscmp(arg, _T("-ch8")) == 0) {
+			//allow compression to use 8-bit Huffman compression
+			compressionPolicy |= CX_COMPRESSION_HUFFMAN8;
+		} else if (_tcscmp(arg, _T("-crl")) == 0) {
+			//allow compression to use RLE compression
+			compressionPolicy |= CX_COMPRESSION_RLE;
 		} else if (_tcscmp(arg, _T("-c8")) == 0) {
 			//allow compression to use VRAM unsafe compression
 			compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;

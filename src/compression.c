@@ -5,6 +5,9 @@
 #include <limits.h>
 #include <stdio.h>
 
+#define min(a,b)      ((a)<(b)?(a):(b))
+#define max(a,b)      ((a)>(b)?(a):(b))
+
 #ifdef _MSC_VER
 #define inline __inline
 #endif
@@ -261,6 +264,8 @@ unsigned char *CxCompressLZ8(const unsigned char *buffer, unsigned int size, uns
 }
 
 
+// ----- Dummy Compression
+
 unsigned char *CxCompressDummy(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize) {
 	unsigned int outSize = 4 + ((size + 3) & ~3);
 	unsigned char *buf = (unsigned char *) calloc(outSize, 1);
@@ -278,6 +283,433 @@ unsigned char *CxCompressDummy(const unsigned char *buffer, unsigned int size, u
 }
 
 
+// ----- Huffman Compression
+
+typedef struct CxiBitStream_ {
+	uint32_t *bits;
+	int nWords;
+	int nBitsInLastWord;
+	int nWordsAlloc;
+	int length;
+} CxiBitStream;
+
+static void CxiBitStreamCreate(CxiBitStream *stream) {
+	stream->nWords = 0;
+	stream->length = 0;
+	stream->nBitsInLastWord = 32;
+	stream->nWordsAlloc = 16;
+	stream->bits = (uint32_t *) calloc(stream->nWordsAlloc, 4);
+}
+
+static void CxiBitStreamFree(CxiBitStream *stream) {
+	free(stream->bits);
+	memset(stream, 0, sizeof(CxiBitStream));
+}
+
+static void CxiBitStreamWrite(CxiBitStream *stream, int bit) {
+	if (stream->nBitsInLastWord == 32) {
+		stream->nBitsInLastWord = 0;
+		stream->nWords++;
+		if (stream->nWords > stream->nWordsAlloc) {
+			int newAllocSize = (stream->nWordsAlloc + 2) * 3 / 2;
+			stream->bits = realloc(stream->bits, newAllocSize * 4);
+			stream->nWordsAlloc = newAllocSize;
+		}
+		stream->bits[stream->nWords - 1] = 0;
+	}
+
+	stream->bits[stream->nWords - 1] |= (bit << (31 - stream->nBitsInLastWord));
+	stream->nBitsInLastWord++;
+	stream->length++;
+}
+
+typedef struct CxiHuffNode_ {
+	uint16_t sym;
+	uint16_t symMin; // had space to spare, maybe make searches a little simpler
+	uint16_t symMax;
+	uint16_t nRepresent;
+	int freq;
+	struct CxiHuffNode_ *left;
+	struct CxiHuffNode_ *right;
+} CxiHuffNode;
+
+typedef struct CxiHuffTreeCode_ {
+	uint8_t value;
+	uint8_t leaf;
+	uint8_t lrbit : 7;
+} CxiHuffTreeCode;
+
+#define ISLEAF(n) ((n)->left==NULL&&(n)->right==NULL)
+
+static int CxiHuffmanNodeComparator(const void *p1, const void *p2) {
+	return ((CxiHuffNode *) p2)->freq - ((CxiHuffNode *) p1)->freq;
+}
+
+static void CxiHuffmanMakeShallowFirst(CxiHuffNode *node) {
+	if (ISLEAF(node)) return;
+	if (node->left->nRepresent > node->right->nRepresent) {
+		CxiHuffNode *left = node->left;
+		node->left = node->right;
+		node->right = left;
+	}
+	CxiHuffmanMakeShallowFirst(node->left);
+	CxiHuffmanMakeShallowFirst(node->right);
+}
+
+static int CxiHuffmanHasSymbol(CxiHuffNode *node, uint16_t sym) {
+	if (ISLEAF(node)) return node->sym == sym;
+	if (sym < node->symMin || sym > node->symMax) return 0;
+	CxiHuffNode *left = node->left;
+	CxiHuffNode *right = node->right;
+	return CxiHuffmanHasSymbol(left, sym) || CxiHuffmanHasSymbol(right, sym);
+}
+
+static void CxiHuffmanConstructTree(CxiHuffNode *nodes, int nNodes) {
+	//sort by frequency, then cut off the remainder (freq=0).
+	qsort(nodes, nNodes, sizeof(CxiHuffNode), CxiHuffmanNodeComparator);
+	for (int i = 0; i < nNodes; i++) {
+		if (nodes[i].freq == 0) {
+			nNodes = i;
+			break;
+		}
+	}
+
+	//unflatten the histogram into a huffman tree. 
+	int nRoots = nNodes;
+	int nTotalNodes = nNodes;
+	while (nRoots > 1) {
+		//copy bottom two nodes to just outside the current range
+		CxiHuffNode *srcA = nodes + nRoots - 2;
+		CxiHuffNode *destA = nodes + nTotalNodes;
+		memcpy(destA, srcA, sizeof(CxiHuffNode));
+
+		CxiHuffNode *left = destA;
+		CxiHuffNode *right = nodes + nRoots - 1;
+		CxiHuffNode *branch = srcA;
+
+		branch->freq = left->freq + right->freq;
+		branch->sym = 0;
+		branch->left = left;
+		branch->right = right;
+		branch->symMin = min(left->symMin, right->symMin);
+		branch->symMax = max(right->symMax, left->symMax);
+		branch->nRepresent = left->nRepresent + right->nRepresent; //may overflow for root, but the root doesn't really matter for this
+
+		nRoots--;
+		nTotalNodes++;
+		qsort(nodes, nRoots, sizeof(CxiHuffNode), CxiHuffmanNodeComparator);
+	}
+
+	//just to be sure, make sure the shallow node always comes first
+	CxiHuffmanMakeShallowFirst(nodes);
+}
+
+static void CxiHuffmanWriteSymbol(CxiBitStream *bits, uint16_t sym, CxiHuffNode *tree) {
+	if (ISLEAF(tree)) return;
+	CxiHuffNode *left = tree->left;
+	CxiHuffNode *right = tree->right;
+	if (CxiHuffmanHasSymbol(left, sym)) {
+		CxiBitStreamWrite(bits, 0);
+		CxiHuffmanWriteSymbol(bits, sym, left);
+	} else {
+		CxiBitStreamWrite(bits, 1);
+		CxiHuffmanWriteSymbol(bits, sym, right);
+	}
+}
+
+static uint8_t CxiHuffmanGetFlagForNode(CxiHuffNode *root) {
+	CxiHuffNode *left = root->left;
+	CxiHuffNode *right = root->right;
+	
+	return (ISLEAF(left) << 1) | (ISLEAF(right) << 0);
+}
+
+static CxiHuffTreeCode *CxiHuffmanCreateTreeCode(CxiHuffNode *root, CxiHuffTreeCode *treeCode) {
+	CxiHuffNode *left = root->left;
+	CxiHuffNode *right = root->right;
+	
+	CxiHuffTreeCode *base = treeCode;
+	
+	//left node
+	{
+		if (ISLEAF(left)) {
+			base[0].value = left->sym;
+			base[0].leaf = 1;
+		} else {
+			uint8_t flag = CxiHuffmanGetFlagForNode(left);
+			
+			CxiHuffTreeCode *wr = treeCode + 2;
+			treeCode = CxiHuffmanCreateTreeCode(left, wr);
+			
+			base[0].value = ((wr - base - 2) / 2);
+			base[0].lrbit = flag;
+			base[0].leaf = 0;
+		}
+	}
+	
+	//right node
+	{
+		if (ISLEAF(right)) {
+			base[1].value = right->sym;
+			base[1].leaf = 1;
+		} else {
+			uint8_t flag = CxiHuffmanGetFlagForNode(right);
+			
+			CxiHuffTreeCode *wr = treeCode + 2;
+			treeCode = CxiHuffmanCreateTreeCode(right, wr);
+			
+			base[1].value = ((wr - base - 2) / 2);
+			base[1].lrbit = flag;
+			base[1].leaf = 0;
+		}
+	}
+	return treeCode;
+}
+
+static void CxiHuffmanCheckTree(CxiHuffTreeCode *treeCode, int nNode) {
+	for (int i = 2; i < nNode; i++) {
+		if (treeCode[i].leaf) continue;
+		
+		//check node distance out of range
+		if (treeCode[i].value <= 0x3F) continue;
+		
+		int slideDst = 1;
+		if (treeCode[i ^ 1].value == 0x3F) {
+			//other node in pair is at maximum distance
+			i ^= 1;
+		} else {
+			//required slide distnace to bring node in range
+			slideDst = treeCode[i].value - 0x3F;
+		}
+		
+		int slideMax = (i >> 1) + treeCode[i].value + 1;
+		int slideMin = slideMax - slideDst;
+		
+		//move node back and rotate node pair range forward one position
+		CxiHuffTreeCode cpy[2];
+		memcpy(cpy, &treeCode[(slideMax << 1)], sizeof(cpy));
+		memmove(&treeCode[(slideMin + 1) << 1], &treeCode[(slideMin + 0) << 1], 2 * slideDst * sizeof(CxiHuffTreeCode));
+		memcpy(&treeCode[(slideMin << 1)], cpy, sizeof(cpy));
+		
+		//update node references to rotated range
+		treeCode[i].value -= slideDst;
+		
+		//if the moved node pair is branch nodes, adjust outgoing references
+		if (!treeCode[(slideMin << 1) + 0].leaf) treeCode[(slideMin << 1) + 0].value += slideDst;
+		if (!treeCode[(slideMin << 1) + 1].leaf) treeCode[(slideMin << 1) + 1].value += slideDst;
+		
+		for (int j = i + 1; j < (slideMin << 1); j++) {
+			if (treeCode[j].leaf) continue;
+			
+			//increment node values referring to slid nodes
+			int refb = (j >> 1) + treeCode[j].value + 1;
+			if ((refb >= slideMin) && (refb < slideMax)) treeCode[j].value++;
+		}
+		
+		for (int j = (slideMin + 1) << 1; j < ((slideMax + 1) << 1); j++) {
+			if (treeCode[j].leaf) continue;
+			
+			//adjust outgoing references from slid nodes
+			int refb = (j >> 1) + treeCode[j].value + 1;
+			if (refb > slideMax) treeCode[j].value--;
+		}
+		
+		//continue again from start of this node pair
+		i &= ~1;
+		i--;
+	}
+}
+
+unsigned char *CxCompressHuffman(const unsigned char *buffer, unsigned int size, int nBits, unsigned int *compressedSize) {
+	//create a histogram of each byte in the file.
+	CxiHuffNode *nodes = (CxiHuffNode *) calloc(512, sizeof(CxiHuffNode));
+	int nSym = 1 << nBits;
+	for (int i = 0; i < nSym; i++) {
+		nodes[i].sym = i;
+		nodes[i].symMin = i;
+		nodes[i].symMax = i;
+		nodes[i].nRepresent = 1;
+	}
+
+	//construct histogram
+	if (nBits == 8) {
+		for (unsigned int i = 0; i < size; i++) {
+			nodes[buffer[i]].freq++;
+		}
+	} else {
+		for (unsigned int i = 0; i < size; i++) {
+			nodes[(buffer[i] >> 0) & 0xF].freq++;
+			nodes[(buffer[i] >> 4) & 0xF].freq++;
+		}
+	}
+	
+	//count nodes
+	int nLeaf = 0;
+	for (int i = 0; i < nSym; i++) {
+		if (nodes[i].freq) nLeaf++;
+	}
+	if (nLeaf < 2) {
+		//insert dummy nodes
+		for (int i = 0; i < nSym && nLeaf < 2; i++) {
+			if (nodes[i].freq == 0) nodes[i].freq = 1;
+		}
+	}
+	
+	//build Huffman tree
+	CxiHuffmanConstructTree(nodes, nSym);
+	
+	//construct Huffman tree encoding
+	CxiHuffTreeCode treeCode[512] = { 0 };
+	treeCode[0].value = ((nLeaf + 1) & ~1) - 1;
+	treeCode[0].lrbit = 0;
+	treeCode[1].value = 0;
+	treeCode[1].lrbit = CxiHuffmanGetFlagForNode(nodes);
+	CxiHuffmanCreateTreeCode(nodes, treeCode + 2);
+	CxiHuffmanCheckTree(treeCode, nLeaf * 2);
+	
+	//now write bits out.
+	CxiBitStream stream;
+	CxiBitStreamCreate(&stream);
+	if (nBits == 8) {
+		for (unsigned int i = 0; i < size; i++) {
+			CxiHuffmanWriteSymbol(&stream, buffer[i], nodes);
+		}
+	} else {
+		for (unsigned int i = 0; i < size; i++) {
+			CxiHuffmanWriteSymbol(&stream, (buffer[i] >> 0) & 0xF, nodes);
+			CxiHuffmanWriteSymbol(&stream, (buffer[i] >> 4) & 0xF, nodes);
+		}
+	}
+
+	//create output bytes
+	unsigned int treeSize = (nLeaf * 2 + 3) & ~3;
+	unsigned int outSize = 4 + treeSize + stream.nWords * 4;
+	unsigned char *finbuf = (unsigned char *) malloc(outSize);
+	*(uint32_t *) finbuf = 0x20 | nBits | (size << 8);
+	
+	for (int i = 0; i < nLeaf * 2; i++) {
+		finbuf[4 + i] = treeCode[i].value | (treeCode[i].leaf ? 0 : (treeCode[i].lrbit << 6));
+	}
+	
+	memcpy(finbuf + 4 + treeSize, stream.bits, stream.nWords * 4);
+	free(nodes);
+	CxiBitStreamFree(&stream);
+	
+	*compressedSize = outSize;
+	return finbuf;
+}
+
+
+// ----- RLE Compression
+
+
+typedef struct CxiRlNode_ {
+	uint32_t weight : 31; // weight of this node
+	uint32_t isRun  :  1; // is node compressed run
+	uint8_t length  :  8; // length of node in bytes
+} CxiRlNode;
+
+static unsigned int CxiFindRlRun(const unsigned char *buffer, unsigned int size, unsigned int maxSize) {
+	if (maxSize > size) maxSize = size;
+	if (maxSize == 0) return 0;
+
+	unsigned char first = buffer[0];
+	for (unsigned int i = 1; i < maxSize; i++) {
+		if (buffer[i] != first) return i;
+	}
+	return maxSize;
+}
+
+unsigned char *CxCompressRL(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize) {
+	//construct a graph
+	CxiRlNode *nodes = (CxiRlNode *) calloc(size, sizeof(CxiRlNode));
+
+	unsigned int pos = size;
+	while (pos--) {
+		CxiRlNode *node = nodes + pos;
+
+		//find longest run up to 130 bytes
+		unsigned int runLength = CxiFindRlRun(buffer + pos, size - pos, 130);
+		
+		unsigned int bestLength = 1, bestCost = UINT_MAX, bestRun = 0;
+		if (runLength >= 3) {
+			//meets threshold, explore run lengths.
+			unsigned int tmpLength = runLength;
+			bestRun = 1;
+			while (tmpLength >= 3) {
+				unsigned int cost = 2;
+				if ((pos + tmpLength) < size) cost += nodes[pos + tmpLength].weight;
+
+				if (cost < bestCost) {
+					bestCost = cost;
+					bestLength = tmpLength;
+				}
+
+				tmpLength--;
+			}
+		}
+
+		//explore cost of storing a byte run
+		unsigned int tmpLength = 0x80;
+		if ((pos + tmpLength) > size) tmpLength = size - pos;
+		while (tmpLength >= 1) {
+			unsigned int cost = (1 + tmpLength);
+			if ((pos + tmpLength) < size) cost += nodes[pos + tmpLength].weight;
+
+			if (cost < bestCost) {
+				bestCost = cost;
+				bestLength = tmpLength;
+				bestRun = 0; // best is not a run
+			}
+			tmpLength--;
+		}
+
+		//put best
+		node->weight = bestCost;
+		node->length = bestLength;
+		node->isRun = bestRun;
+	}
+
+	//produce RL encoding
+	pos = 0;
+	unsigned int outLength = 4;
+	while (pos < size) {
+		CxiRlNode *node = nodes + pos;
+
+		if (node->isRun) outLength += 2;
+		else             outLength += 1 + node->length;
+		pos += node->length;
+	}
+
+	unsigned char *out = (unsigned char *) calloc(outLength, 1);
+	*(uint32_t *) out = 0x30 | (size << 8);
+
+	pos = 0;
+	unsigned int outpos = 4;
+	while (pos < size) {
+		CxiRlNode *node = nodes + pos;
+
+		if (node->isRun) {
+			out[outpos++] = 0x80 | (node->length - 3);
+			out[outpos++] = buffer[pos];
+		} else {
+			out[outpos++] = 0x00 | (node->length - 1);
+			memcpy(out + outpos, buffer + pos, node->length);
+			outpos += node->length;
+		}
+		pos += node->length;
+	}
+
+	free(nodes);
+
+	*compressedSize = outLength;
+	return out;
+}
+
+
+
+// ----- Generic compression
+
 unsigned char *CxCompress(const unsigned char *data, unsigned int size, unsigned int *pOutSize, CxCompressionPolicy compression) {
 	unsigned int nTypes = 0;
 	unsigned int sizes[CX_NUM_COMPRESSION_TYPES] = { 0 };
@@ -293,6 +725,21 @@ unsigned char *CxCompress(const unsigned char *data, unsigned int size, unsigned
 		} else {
 			outs[nTypes] = CxCompressLZ8(data, size, &sizes[nTypes]);
 		}
+		if (outs[nTypes] == NULL) goto Error;
+		nTypes++;
+	}
+	if (compression & CX_COMPRESSION_HUFFMAN4) {
+		outs[nTypes] = CxCompressHuffman(data, size, 4, &sizes[nTypes]);
+		if (outs[nTypes] == NULL) goto Error;
+		nTypes++;
+	}
+	if (compression & CX_COMPRESSION_HUFFMAN8) {
+		outs[nTypes] = CxCompressHuffman(data, size, 8, &sizes[nTypes]);
+		if (outs[nTypes] == NULL) goto Error;
+		nTypes++;
+	}
+	if (compression & CX_COMPRESSION_RLE) {
+		outs[nTypes] = CxCompressRL(data, size, &sizes[nTypes]);
 		if (outs[nTypes] == NULL) goto Error;
 		nTypes++;
 	}
