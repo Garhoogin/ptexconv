@@ -456,6 +456,30 @@ static COLOR32 PtcParseHexColor24(const TCHAR *str) {
 	return (REVERSE(c)) & 0xFFFFFF;
 }
 
+static TCHAR *PtcSuffixFileName(const TCHAR *base, const TCHAR *suffix) {
+	int baselen = _tcslen(base), suffixlen = _tcslen(suffix);
+	TCHAR *newbuf = (TCHAR *) calloc(baselen + suffixlen + 1, sizeof(TCHAR));
+	
+	memcpy(newbuf, base, baselen * sizeof(TCHAR));
+	memcpy(newbuf + baselen, suffix, (suffixlen + 1) * sizeof(TCHAR));
+	return newbuf;
+}
+
+static TCHAR *PtcGetFileName(const TCHAR *path) {
+	const TCHAR *start = path;
+	TCHAR tc;
+	while ((tc = *(path++)) != _T('\0')) {
+#ifdef _WIN32
+		if (tc == _T('/') || tc == _T('\\')) start = path;
+#else
+		if (tc == _T('/')) start = path;
+#endif
+	}
+	
+	//cast away const
+	return (TCHAR *) start;
+}
+
 
 // ----- file output routines
 
@@ -1057,15 +1081,12 @@ int _tmain(int argc, TCHAR **argv) {
 
 		if (outputGrf) {
 			//output GRIT GRF file
-			FILE *fp;
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 4 + 1, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".grf"), (4 + 1) * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".grf"));
 			
 			//GRF requires one compression type specified
 			if (!(compressionPolicy & CX_COMPRESSION_TYPES_MASK)) compressionPolicy |= CX_COMPRESSION_NONE;
 			
-			fp = _tfopen(nameBuffer, _T("wb"));
+			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
 			GrfBgWriteHdr(fp, depth, bgAffine ? 8 : 16, width, height, paletteOutSize);
 			GrfWritePltt(fp, pal, paletteOutSize, compressionPolicy);
@@ -1078,9 +1099,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//suffix the filename with .nbfp, .nbfc, .nbfs. So reserve 6 characters+base length.
 			FILE *fp;
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + NBFX_EXTLEN + 1, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, NBFP_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, NBFP_EXTENSION);
 
 			if (!screenExclusive) {
 				fp = _tfopen(srcPalFile == NULL ? nameBuffer : srcPalFile, _T("wb"));
@@ -1113,9 +1132,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			//suffix filename with .bmp, reserve 5 characters+base length
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 5, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".bmp"), 5 * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".bmp"));
 
 			int charsX = width / 8, charsY = height / 8;
 			int outWidth = charsX * 8, outHeight = charsY * 8;
@@ -1156,21 +1173,14 @@ int _tmain(int argc, TCHAR **argv) {
 			free(indexBuffer);
 			free(nameBuffer);
 		} else { //output header and source file
-
-				 //suffix the filename with .c, So reserve 3 characters+base length.
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 3, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".c"), 3 * sizeof(TCHAR));
+			//suffix the filename with .c, So reserve 3 characters+base length.
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".c"));
 
 			int month, day, year, hour, minute, am;
 			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
 
 			//find BG name
-			int lastSepIndex = -1;
-			for (unsigned i = 0; i < _tcslen(srcImage); i++) {
-				if (srcImage[i] == _T('/') || srcImage[i] == _T('\\')) lastSepIndex = i;
-			}
-			const TCHAR *name = srcImage + lastSepIndex + 1;
+			const TCHAR *name = PtcGetFileName(srcImage);
 
 			//copy to MBS buffer, stripping extension too
 			char *bgName = (char *) calloc(_tcslen(name) + 1, sizeof(char));
@@ -1347,16 +1357,13 @@ int _tmain(int argc, TCHAR **argv) {
 
 		if (outputGrf) {
 			//output GRIT GRF file
-			FILE *fp;
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 4 + 1, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".grf"), (4 + 1) * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".grf"));
 			
 			//GRF requires one compression type specified
 			if (!(compressionPolicy & CX_COMPRESSION_TYPES_MASK)) compressionPolicy |= CX_COMPRESSION_NONE;
 			
 			int fmt = FORMAT(texture.texels.texImageParam);
-			fp = _tfopen(nameBuffer, _T("wb"));
+			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
 			GrfTexWriteHdr(fp, fmt, width, height, texture.palette.nColors);
 			GrfWritePltt(fp, texture.palette.pal, texture.palette.nColors, compressionPolicy);
@@ -1365,9 +1372,7 @@ int _tmain(int argc, TCHAR **argv) {
 			fclose(fp);
 		} else if (outputBinary) {
 			//suffix the filename with .ntft, .nfti, .nftp. So reserve 6 characters+base length.
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + NTFX_EXTLEN + 1, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, NTFT_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, NTFT_EXTENSION);
 
 			//output texel always
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
@@ -1396,28 +1401,20 @@ int _tmain(int argc, TCHAR **argv) {
 			free(nameBuffer);
 		} else if (outputTga) {
 			//output as NNS TGA file
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 5, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".tga"), 5 * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".tga"));
 
 			PtcWriteNnsTga(nameBuffer, &texture.texels, &texture.palette);
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 			free(nameBuffer);
 		} else {
 			//suffix the filename with .c, So reserve 3 characters+base length.
-			TCHAR *nameBuffer = (TCHAR *) calloc(baseLength + 3, sizeof(TCHAR));
-			memcpy(nameBuffer, outBase, (baseLength + 1) * sizeof(TCHAR));
-			memcpy(nameBuffer + baseLength, _T(".c"), 3 * sizeof(TCHAR));
+			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".c"));
 
 			int month, day, year, hour, minute, am;
 			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
 
 			//find texture name
-			int lastSepIndex = -1;
-			for (unsigned i = 0; i < _tcslen(srcImage); i++) {
-				if (srcImage[i] == _T('/') || srcImage[i] == _T('\\')) lastSepIndex = i;
-			}
-			const TCHAR *name = srcImage + lastSepIndex + 1;
+			const TCHAR *name = PtcGetFileName(srcImage);
 
 			//copy to MBS buffer, stripping extension too
 			char *texName = (char *) calloc(_tcslen(name) + 1, sizeof(char));
