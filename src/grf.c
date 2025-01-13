@@ -31,6 +31,24 @@ static int GrfAlignBlock(FILE *fp, unsigned int dataSize) {
 }
 
 
+// ----- internal API
+
+static int GrfBgScreenTypeToBitsPerUnit(GrfBgScreenType type) {
+	switch (type) {
+		case GRF_SCREEN_TYPE_NONE:
+			return 0;
+		case GRF_SCREEN_TYPE_TEXT_16x16:
+		case GRF_SCREEN_TYPE_TEXT_256x1:
+		case GRF_SCREEN_TYPE_AFFINE_EXT:
+			return 16;
+		case GRF_SCREEN_TYPE_AFFINE:
+			return 8;
+		default:
+			return 0;
+	}
+}
+
+
 // ----- public API
 
 int GrfWriteHeader(FILE *fp) {
@@ -42,23 +60,27 @@ int GrfWriteHeader(FILE *fp) {
 }
 
 int GrfWriteHdr(
-	FILE       *fp,
-	GrfGfxAttr  gfxAttr,
-	int         scrUnit,
-	int         metaUnit,
-	int         nPlttColors,
-	int         chrWidth,
-	int         chrHeight, 
-	int         metaWidth,
-	int         metaHeight,
-	int         gfxWidth,
-	int         gfxHeight
+	FILE           *fp,
+	GrfGfxAttr      gfxAttr,
+	GrfBgScreenType scrType,
+	int             metaUnit,
+	int             nPlttColors,
+	int             chrWidth,
+	int             chrHeight, 
+	int             metaWidth,
+	int             metaHeight,
+	int             gfxWidth,
+	int             gfxHeight
 ) {
 
 	GrfHeader fileHeader = { 0 };
 	fileHeader.version = GRF_VERSION;
 	fileHeader.gfxAttr = gfxAttr;
-	fileHeader.scrUnit = scrUnit;
+#if (GRF_VERSION >= 3)
+	fileHeader.bgScreenType = scrType;
+#else
+	fileHeader.scrUnit = GrfBgScreenTypeToBitsPerUnit(scrType);
+#endif
 	fileHeader.metaUnit = metaUnit;
 	fileHeader.nPlttColors = nPlttColors;
 	fileHeader.chrWidth = chrWidth;
@@ -69,21 +91,21 @@ int GrfWriteHdr(
 	fileHeader.gfxHeight = gfxHeight;
 	
 	int status = 1;
-	if (status) status = GrfEmitBlockHeader(fp, GRF_MKTAG('H', 'D', 'R', 'X'), sizeof(fileHeader));
+	if (status) status = GrfEmitBlockHeader(fp, GRF_TAG_HDRX, sizeof(fileHeader));
 	if (status) status = GrfWrite(fp, &fileHeader, sizeof(fileHeader));
 	return status;
 }
 
 int GrfBgWriteHdr(
-	FILE  *fp,
-	int    depth,
-	int    scrUnit,
-	int    width,
-	int    height,
-	int    paletteSize
+	FILE           *fp,
+	int             depth,
+	GrfBgScreenType scrType,
+	int             width,
+	int             height,
+	int             paletteSize
 ) {
 	//write BG header for GRF
-	return GrfWriteHdr(fp, depth, scrUnit, 0, paletteSize, 8, 8, 0, 0, width, height);
+	return GrfWriteHdr(fp, depth, scrType, 0, paletteSize, 8, 8, 0, 0, width, height);
 }
 
 int GrfTexWriteHdr(
@@ -107,7 +129,7 @@ int GrfTexWriteHdr(
 	
 	//write texture header for GRF
 	int tileSize = (fmt == CT_4x4) ? 4 : 1;
-	return GrfWriteHdr(fp, gfxAttr, 0, 0, paletteSize, tileSize, tileSize, 0, 0, width, height);
+	return GrfWriteHdr(fp, gfxAttr, GRF_SCREEN_TYPE_NONE, 0, paletteSize, tileSize, tileSize, 0, 0, width, height);
 }
 
 int GrfWritePltt(FILE *fp, const void *data, unsigned int nColors, CxCompressionPolicy compress) {
@@ -117,7 +139,7 @@ int GrfWritePltt(FILE *fp, const void *data, unsigned int nColors, CxCompression
 	if (compData == NULL) return 0;
 	
 	int status = 1;
-	if (status) status = GrfEmitBlockHeader(fp, GRF_MKTAG('P', 'A', 'L', ' '), dataSize);
+	if (status) status = GrfEmitBlockHeader(fp, GRF_TAG_PAL, dataSize);
 	if (status) status = GrfWrite(fp, compData, dataSize);
 	if (status) status = GrfAlignBlock(fp, dataSize);
 	free(compData);
@@ -132,7 +154,7 @@ int GrfWriteGfx(FILE *fp, const void *data, unsigned int size, CxCompressionPoli
 	if (compData == NULL) return 0;
 	
 	int status = 1;
-	if (status) status = GrfEmitBlockHeader(fp, GRF_MKTAG('G', 'F', 'X', ' '), dataSize);
+	if (status) status = GrfEmitBlockHeader(fp, GRF_TAG_GFX, dataSize);
 	if (status) status = GrfWrite(fp, compData, dataSize);
 	if (status) status = GrfAlignBlock(fp, dataSize);
 	free(compData);
@@ -147,7 +169,7 @@ int GrfWriteScr(FILE *fp, const void *data, unsigned int size, CxCompressionPoli
 	if (compData == NULL) return 0;
 	
 	int status = 1;
-	if (status) status = GrfEmitBlockHeader(fp, GRF_MKTAG('M', 'A', 'P', ' '), dataSize);
+	if (status) status = GrfEmitBlockHeader(fp, GRF_TAG_MAP, dataSize);
 	if (status) status = GrfWrite(fp, compData, dataSize);
 	if (status) status = GrfAlignBlock(fp, dataSize);
 	free(compData);
@@ -170,7 +192,7 @@ int GrfWriteTexImage(
 	
 	//write GFX block
 	int status = 1;
-	if (status) status = GrfEmitBlockHeader(fp, GRF_MKTAG('G', 'F', 'X', ' '), dataSize);
+	if (status) status = GrfEmitBlockHeader(fp, GRF_TAG_GFX, dataSize);
 	if (status) status = GrfWrite(fp, compData, dataSize);
 	if (status) status = GrfAlignBlock(fp, dataSize);
 	free(compData);
@@ -181,7 +203,7 @@ int GrfWriteTexImage(
 		void *pidxComp = CxCompress(pidx, pidxSize, &dataSizePidx, compress);
 		if (pidxComp == NULL) status = 0;
 		
-		if (status) status = GrfEmitBlockHeader(fp, GRF_MKTAG('P', 'I', 'D', 'X'), dataSizePidx);
+		if (status) status = GrfEmitBlockHeader(fp, GRF_TAG_PIDX, dataSizePidx);
 		if (status) status = GrfWrite(fp, pidxComp, dataSizePidx);
 		if (status) status = GrfAlignBlock(fp, dataSizePidx);
 		if (pidxComp != NULL) free(pidxComp);

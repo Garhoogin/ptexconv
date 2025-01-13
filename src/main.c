@@ -46,15 +46,24 @@
 #define MODE_BG      0
 #define MODE_TEXTURE 1
 
-int _fltused;
+typedef enum PtcOutputMode_ {
+	PTC_OUT_MODE_BINARY,
+	PTC_OUT_MODE_C,
+	PTC_OUT_MODE_DIB,
+	PTC_OUT_MODE_NNSTGA,
+	PTC_OUT_MODE_GRF
+} PtcOutputMode;
+
 
 #ifdef _MSC_VER
+int _fltused;
+
 extern long _ftol(double d);
 
 long _ftol2_sse(float f) { //ugly hack
 	return _ftol(f);
 }
-#endif
+#endif // _MSC_VER
 
 //BG file suffixes
 #define NBFX_EXTLEN    8 /* _xxx.bin */
@@ -673,44 +682,43 @@ int _tmain(int argc, TCHAR **argv) {
 	}
 
 	//begin processing arguments. First, determine global settings and conversion mode.
+	PtcOutputMode outMode = PTC_OUT_MODE_BINARY;
+	int mode = MODE_BG;            //
 	const TCHAR *fixedPalette = NULL;
 	const TCHAR *srcImage = NULL;
 	const TCHAR *outBase = NULL;
-	int nMaxColors = -1; //default. 256 for BG, automatic for texture
-	int silent = 1;
-	int diffuse = 0;
-	int outputBinary = 1;
-	int outputTga = 0, outputDib = 0, outputGrf = 0;
-	int mode = MODE_BG;
-	int balance = BALANCE_DEFAULT;
-	int colorBalance = BALANCE_DEFAULT;
-	int enhanceColors = 0;          // enhance largely used colors
-	int useAlphaKey = 0;            // use alpha key?
-	COLOR32 alphaKey = 0;           // the alpha key color
+	int nMaxColors = -1;                // default. 256 for BG, automatic for texture
+	int silent = 1;                     // default output level (silent)
+	int diffuse = 0;                    // default error diffusion amount (0%)
+	int balance = BALANCE_DEFAULT;      // default lightness-color balance setting
+	int colorBalance = BALANCE_DEFAULT; // default color balance setting (neutral)
+	int enhanceColors = 0;              // enhance largely used colors
+	int useAlphaKey = 0;                // use alpha key?
+	COLOR32 alphaKey = 0;               // the alpha key color
 
 	//BG settings
-	int nMaxChars = 1024;           // maximum character count for BG generator
-	int depth = 8;                  // graphics bit depth for BG generator
-	int nPalettes = 1;              // number of palettes for BG generator
-	int paletteBase = 0;            // palette base index for BG generator
-	int charBase = 0;               // character base address for BG generator
-	int explicitCharBase = 0;       // charBase explicitly set via command line?
-	int outputScreen = 1;           // output BG screen data?
-	int compressPalette = 0;        // only output target palettes/colors?
-	int paletteOffset = 0;          // offset from start of hw palette
-	int screenExclusive = 0;        // output only screen file?
-	int bgAffine = 0;               // output affine mode BG
-	int bgAffineExt = 0;            // output affine EXT mode BG
-	int bgTileFlip = 1;             // use tile flip modes in BG
-	const TCHAR *srcPalFile = NULL; // palette file to read/overwrite
-	const TCHAR *srcChrFile = NULL; // character file to read/overwrite
+	int nMaxChars = 1024;               // maximum character count for BG generator
+	int depth = 8;                      // graphics bit depth for BG generator
+	int nPalettes = 1;                  // number of palettes for BG generator
+	int paletteBase = 0;                // palette base index for BG generator
+	int charBase = 0;                   // character base address for BG generator
+	int explicitCharBase = 0;           // charBase explicitly set via command line?
+	int outputScreen = 1;               // output BG screen data?
+	int compressPalette = 0;            // only output target palettes/colors?
+	int paletteOffset = 0;              // offset from start of hw palette
+	int screenExclusive = 0;            // output only screen file?
+	int bgAffine = 0;                   // output affine mode BG
+	int bgAffineExt = 0;                // output affine EXT mode BG
+	int bgTileFlip = 1;                 // use tile flip modes in BG
+	const TCHAR *srcPalFile = NULL;     // palette file to read/overwrite
+	const TCHAR *srcChrFile = NULL;     // character file to read/overwrite
 
 
 	//Texture settings
-	int format = -1;                // texture format (default: judge automatically)
-	int noLimitPaletteSize = 0;     // disable 4x4 compression palette size limit (up to 32k colors)
-	int tex4x4Threshold = 0;        // 4x4 compression threshold of mergence
-	int trimT = 0;                  // trim texture in the T axis if not a power of 2 in height
+	int format = -1;                    // texture format (default: judge automatically)
+	int noLimitPaletteSize = 0;         // disable 4x4 compression palette size limit (up to 32k colors)
+	int tex4x4Threshold = 0;            // 4x4 compression threshold of mergence
+	int trimT = 0;                      // trim texture in the T axis if not a power of 2 in height
 	
 	//Compression settings
 	CxCompressionPolicy compressionPolicy = 0;
@@ -727,11 +735,11 @@ int _tmain(int argc, TCHAR **argv) {
 			i++;
 			if (i < argc) outBase = argv[i];
 		} else if (_tcscmp(arg, _T("-ob")) == 0) {
-			outputBinary = 1;
+			outMode = PTC_OUT_MODE_BINARY;
 		} else if (_tcscmp(arg, _T("-oc")) == 0) {
-			outputBinary = 0;
+			outMode = PTC_OUT_MODE_C;
 		} else if (_tcscmp(arg, _T("-og")) == 0) {
-			outputGrf = 1;
+			outMode = PTC_OUT_MODE_GRF;
 		} else if (_tcscmp(arg, _T("-k")) == 0) {
 			useAlphaKey = 1;
 			i++;
@@ -788,7 +796,7 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-ns")) == 0) {
 			outputScreen = 0;
 		} else if (_tcscmp(arg, _T("-od")) == 0) {
-			outputDib = 1;
+			outMode = PTC_OUT_MODE_DIB;
 		} else if (_tcscmp(arg, _T("-cb")) == 0) {
 			explicitCharBase = 1;
 			i++;
@@ -834,7 +842,7 @@ int _tmain(int argc, TCHAR **argv) {
 			i++;
 			if (i < argc) fixedPalette = argv[i];
 		} else if (_tcscmp(arg, _T("-ot")) == 0) {
-			outputTga = 1;
+			outMode = PTC_OUT_MODE_NNSTGA;
 		} else if (_tcscmp(arg, _T("-ct")) == 0) {
 			i++;
 			if (i < argc) tex4x4Threshold = _ttoi(argv[i]);
@@ -890,7 +898,7 @@ int _tmain(int argc, TCHAR **argv) {
 	if (mode == MODE_BG) {
 		//BG mode paramter checks
 		int bgText = !(bgAffine || bgAffineExt);
-		PTC_FAIL_IF(outputTga,                                    "NNS TGA output is not applicable for BG.\n");
+		PTC_FAIL_IF(outMode == PTC_OUT_MODE_NNSTGA,               "NNS TGA output is not applicable for BG.\n");
 		PTC_FAIL_IF(depth != 4 && depth != 8,                     "Invalid bit depth specified for BG (%d).\n", depth);
 		PTC_FAIL_IF(nMaxColors > (1 << depth),                    "Invalid color count per palette specified for BG of %d bit depth (%d).\n", depth, nMaxColors);
 		PTC_FAIL_IF(paletteOffset >= (1 << depth),                "Invalid palette offset specified (%d).\n", paletteOffset);
@@ -905,7 +913,7 @@ int _tmain(int argc, TCHAR **argv) {
 		PTC_FAIL_IF(screenExclusive && (srcChrFile == NULL || srcPalFile == NULL), "Palette and character file required for this command.\n");
 	} else if (mode == MODE_TEXTURE) {
 		//texture mode paramter checks
-		PTC_FAIL_IF(outputDib,                                    "DIB output is not applicable for texture.\n");
+		PTC_FAIL_IF(outMode == PTC_OUT_MODE_DIB,                  "DIB output is not applicable for texture.\n");
 	}
 
 	//MBS copy of base
@@ -940,10 +948,9 @@ int _tmain(int argc, TCHAR **argv) {
 		if (paletteBase + nPalettes > 16) nPalettes = 16 - paletteBase;
 		if (bgAffine && nMaxChars != 1 && nMaxChars > 256) nMaxChars = 256;
 
-		if (outputDib) {
+		if (outMode == PTC_OUT_MODE_DIB) {
 			outputScreen = 0;
 			nMaxChars = -1;
-			outputBinary = 0;
 		}
 
 		//determine palette size for output
@@ -1079,22 +1086,34 @@ int _tmain(int argc, TCHAR **argv) {
 			charSize = requiredCharSize;
 		}
 
-		if (outputGrf) {
+		if (outMode == PTC_OUT_MODE_GRF) {
 			//output GRIT GRF file
 			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".grf"));
 			
 			//GRF requires one compression type specified
 			if (!(compressionPolicy & CX_COMPRESSION_TYPES_MASK)) compressionPolicy |= CX_COMPRESSION_NONE;
 			
+			//get BG screen type
+			GrfBgScreenType scrType = GRF_SCREEN_TYPE_NONE;
+			if (bgAffine) {
+				scrType = GRF_SCREEN_TYPE_AFFINE;
+			} else if (bgAffineExt) {
+				scrType = GRF_SCREEN_TYPE_AFFINE_EXT;
+			} else if (depth == 8) {
+				scrType = GRF_SCREEN_TYPE_TEXT_256x1;
+			} else {
+				scrType = GRF_SCREEN_TYPE_TEXT_16x16;
+			}
+			
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
-			GrfBgWriteHdr(fp, depth, bgAffine ? 8 : 16, width, height, paletteOutSize);
+			GrfBgWriteHdr(fp, depth, scrType, width, height, paletteOutSize);
 			GrfWritePltt(fp, pal, paletteOutSize, compressionPolicy);
 			GrfWriteGfx(fp, chars, charSize, compressionPolicy);
 			GrfWriteScr(fp, screen, screenSize, compressionPolicy);
 			GrfFinalize(fp);
 			fclose(fp);
-		} else if (outputBinary) {
+		} else if (outMode == PTC_OUT_MODE_BINARY) {
 			//output NBFP, NBFC, NBFS.
 
 			//suffix the filename with .nbfp, .nbfc, .nbfs. So reserve 6 characters+base length.
@@ -1124,7 +1143,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 			free(nameBuffer);
 
-		} else if (outputDib) { //output DIB file
+		} else if (outMode == PTC_OUT_MODE_DIB) { //output DIB file
 			//we physically cannot cram this many colors into a DIB palette
 			if (depth == 8 && nPalettes > 1) {
 				fprintf(stderr, "Cannot output DIB for EXT BG.");
@@ -1252,10 +1271,6 @@ int _tmain(int argc, TCHAR **argv) {
 	} else {
 		//Generate Texture
 		//fix up automatic flags
-
-		if (outputTga) {
-			outputBinary = 0;
-		}
 		if (format == -1) {
 			format = PtcAutoSelectTextureFormat(px, width, height);
 		}
@@ -1344,7 +1359,7 @@ int _tmain(int argc, TCHAR **argv) {
 		TxConvert(&params);
 		
 		//trim texture data by height
-		if (!outputTga && trimT) {
+		if (outMode != PTC_OUT_MODE_NNSTGA && trimT) {
 			//NNS TGA texture data shall not be trimmed
 			texture.texels.height = height;
 			PtcTrimTextureData(&texture.texels);
@@ -1355,7 +1370,7 @@ int _tmain(int argc, TCHAR **argv) {
 		int texelSize = TEXW(texture.texels.texImageParam) * texture.texels.height * bppArray[format] / 8;
 		int indexSize = (format == CT_4x4) ? (texelSize >> 1) : 0;
 
-		if (outputGrf) {
+		if (outMode == PTC_OUT_MODE_GRF) {
 			//output GRIT GRF file
 			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".grf"));
 			
@@ -1370,7 +1385,7 @@ int _tmain(int argc, TCHAR **argv) {
 			GrfWriteTexImage(fp, texture.texels.texel, texelSize, texture.texels.cmp, indexSize, compressionPolicy);
 			GrfFinalize(fp);
 			fclose(fp);
-		} else if (outputBinary) {
+		} else if (outMode == PTC_OUT_MODE_BINARY) {
 			//suffix the filename with .ntft, .nfti, .nftp. So reserve 6 characters+base length.
 			TCHAR *nameBuffer = PtcSuffixFileName(outBase, NTFT_EXTENSION);
 
@@ -1399,7 +1414,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			free(nameBuffer);
-		} else if (outputTga) {
+		} else if (outMode == PTC_OUT_MODE_NNSTGA) {
 			//output as NNS TGA file
 			TCHAR *nameBuffer = PtcSuffixFileName(outBase, _T(".tga"));
 
