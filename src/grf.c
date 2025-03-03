@@ -2,6 +2,7 @@
 #include "compression.h"
 #include "texture.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
