@@ -34,6 +34,8 @@ static int GrfAlignBlock(FILE *fp, unsigned int dataSize) {
 
 // ----- internal API
 
+#if (GRF_VERSION < 2)
+
 static int GrfBgScreenTypeToBitsPerUnit(GrfBgScreenType type) {
 	switch (type) {
 		case GRF_SCREEN_TYPE_NONE:
@@ -48,6 +50,8 @@ static int GrfBgScreenTypeToBitsPerUnit(GrfBgScreenType type) {
 			return 0;
 	}
 }
+
+#endif
 
 
 // ----- public API
@@ -77,7 +81,7 @@ int GrfWriteHdr(
 	GrfHeader fileHeader = { 0 };
 	fileHeader.version = GRF_VERSION;
 	fileHeader.gfxAttr = gfxAttr;
-#if (GRF_VERSION >= 3)
+#if (GRF_VERSION >= 2)
 	fileHeader.bgScreenType = scrType;
 #else
 	fileHeader.scrUnit = GrfBgScreenTypeToBitsPerUnit(scrType);

@@ -50,7 +50,7 @@ typedef struct GrfBinaryBlockHeader_ {
 typedef struct GrfHeader_ {
 	uint16_t version;                     // GRF format version
 	uint16_t gfxAttr;                     // Graphics attributes
-#if (GRF_VERSION >= 3)
+#if (GRF_VERSION >= 2)
 	uint16_t bgScreenType;                // BG screen type (GrfBgScreenType)
 #else
 	uint16_t scrUnit;                     // bits per unit of BG screen data
