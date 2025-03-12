@@ -12,6 +12,14 @@
 #define inline __inline
 #endif
 
+static void *CxiShrink(void *block, unsigned int to) {
+	void *newblock = realloc(block, to);
+	if (newblock == NULL) {
+		//alloc fail, return old block
+		return block;
+	}
+	return newblock;
+}
 
 // ----- LZ77 encoding constants
 
@@ -31,75 +39,161 @@ typedef struct CxiLzNode_ {
 	uint32_t weight;           // weight of node
 } CxiLzNode;
 
+//struct for keeping track of LZ sliding window
+typedef struct CxiLzState_ {
+	const unsigned char *buffer;
+	unsigned int size;
+	unsigned int pos;
+	unsigned int minLength;
+	unsigned int maxLength;
+	unsigned int minDistance;
+	unsigned int maxDistance;
+	unsigned int symLookup[512];
+	unsigned int *chain;
+} CxiLzState;
 
-static unsigned int CxiCompareMemory(const unsigned char *b1, const unsigned char *b2, unsigned int nMax, unsigned int nAbsoluteMax) {
-	if (nMax > nAbsoluteMax) nMax = nAbsoluteMax;
-
-	if (nAbsoluteMax >= nMax) {
-		//compare nAbsoluteMax bytes, do not perform any looping.
-		unsigned int nSame = 0;
-		while (nAbsoluteMax > 0) {
-			if (*(b1++) != *(b2++)) break;
-			nAbsoluteMax--;
-			nSame++;
-		}
-		return nSame;
-	} else {
-		//compare nMax bytes, then repeat the comparison until nAbsoluteMax is 0.
-		unsigned int nSame = 0;
-		while (nAbsoluteMax > 0) {
-
-			//compare strings once, incrementing b2 (but keeping b1 fixed since it's repeating)
-			unsigned int nSameThis = 0;
-			for (unsigned int i = 0; i < nMax; i++) {
-				if (b1[i] == *(b2++)) {
-					nSameThis++;
-				} else {
-					break;
-				}
-			}
-
-			nAbsoluteMax -= nSameThis;
-			nSame += nSameThis;
-			if (nSameThis < nMax) break; //failed comparison
-		}
-		return nSame;
-	}
-
+static unsigned int CxiLzHash3(const unsigned char *p) {
+	unsigned char c0 = p[0];         // A
+	unsigned char c1 = p[0] ^ p[1];  // A ^ B
+	unsigned char c2 = p[0] ^ p[2];  // (A ^ B) ^ (B ^ C)
+	return (c0 ^ (c1 << 1) ^ (c2 << 2) ^ (c2 >> 7)) & 0x1FF;
 }
 
-static unsigned int CxiSearchLZ(const unsigned char *buffer, unsigned int size, unsigned int curpos, unsigned int minDistance, unsigned int maxDistance, unsigned int maxLength, unsigned int *pDistance) {
-	//nProcessedBytes = curpos
-	unsigned int nBytesLeft = size - curpos;
+static void CxiLzStateInit(CxiLzState *state, const unsigned char *buffer, unsigned int size, unsigned int minLength, unsigned int maxLength, unsigned int minDistance, unsigned int maxDistance) {
+	state->buffer = buffer;
+	state->size = size;
+	state->pos = 0;
+	state->minLength = minLength;
+	state->maxLength = maxLength;
+	state->minDistance = minDistance;
+	state->maxDistance = maxDistance;
 
-	//the maximum distance we can search backwards is limited by how far into the buffer we are. It won't
-	//make sense to a decoder to copy bytes from before we've started.
-	if (maxDistance > curpos) maxDistance = curpos;
-
-	//keep track of the biggest match and where it was
-	unsigned int biggestRun = 0, biggestRunIndex = 0;
-
-	//the longest string we can match, including repetition by overwriting the source.
-	unsigned int nMaxCompare = maxLength;
-	if (nMaxCompare > nBytesLeft) nMaxCompare = nBytesLeft;
-
-	//begin searching backwards.
-	for (unsigned int j = minDistance; j <= maxDistance; j++) {
-		//compare up to 0xF bytes, at most j bytes.
-		unsigned int nCompare = maxLength;
-		if (nCompare > j) nCompare = j;
-		if (nCompare > nMaxCompare) nCompare = nMaxCompare;
-
-		unsigned int nMatched = CxiCompareMemory(buffer - j, buffer, nCompare, nMaxCompare);
-		if (nMatched > biggestRun) {
-			biggestRun = nMatched;
-			biggestRunIndex = j;
-			if (biggestRun == nMaxCompare) break;
-		}
+	for (unsigned int i = 0; i < 512; i++) {
+		//init symbol lookup to empty
+		state->symLookup[i] = UINT_MAX;
 	}
 
-	*pDistance = biggestRunIndex;
-	return biggestRun;
+	state->chain = (unsigned int *) calloc(state->maxDistance, sizeof(unsigned int));
+	for (unsigned int i = 0; i < state->maxDistance; i++) {
+		state->chain[i] = UINT_MAX;
+	}
+}
+
+static void CxiLzStateFree(CxiLzState *state) {
+	free(state->chain);
+}
+
+static unsigned int CxiLzStateGetChainIndex(CxiLzState *state, unsigned int index) {
+	return (state->pos - index) % state->maxDistance;
+}
+
+static unsigned int CxiLzStateGetChain(CxiLzState *state, int index) {
+	unsigned int chainIndex = CxiLzStateGetChainIndex(state, index);
+
+	return state->chain[chainIndex];
+}
+
+static void CxiLzStatePutChain(CxiLzState *state, unsigned int index, unsigned int data) {
+	unsigned int chainIndex = CxiLzStateGetChainIndex(state, index);
+
+	state->chain[chainIndex] = data;
+}
+
+static void CxiLzStateSlideByte(CxiLzState *state) {
+	if (state->pos >= state->size) return; // cannot slide
+
+	//only update search structures when we have enough space left to necessitate searching.
+	if ((state->size - state->pos) >= 3) {
+		//fetch next 3 bytes' hash
+		unsigned int next = CxiLzHash3(state->buffer + state->pos);
+
+		//get the distance back to the next byte before sliding. If it exists in the window,
+		//we'll have nextDelta less than UINT_MAX. We'll take this first occurrence and it 
+		//becomes the offset from the current byte. Bear in mind the chain is 0-indexed starting
+		//at a distance of 1. 
+		unsigned int nextDelta = state->symLookup[next];
+		if (nextDelta != UINT_MAX) {
+			nextDelta++;
+			if (nextDelta >= state->maxDistance) {
+				nextDelta = UINT_MAX;
+			}
+		}
+		CxiLzStatePutChain(state, 0, nextDelta);
+
+		//increment symbol lookups
+		for (int i = 0; i < 512; i++) {
+			if (state->symLookup[i] != UINT_MAX) {
+				state->symLookup[i]++;
+				if (state->symLookup[i] > state->maxDistance) state->symLookup[i] = UINT_MAX;
+			}
+		}
+		state->symLookup[next] = 0; // update entry for the current byte to the start of the chain
+	}
+
+	state->pos++;
+}
+
+static void CxiLzStateSlide(CxiLzState *state, unsigned int nSlide) {
+	while (nSlide--) CxiLzStateSlideByte(state);
+}
+
+static unsigned int CxiCompareMemory(const unsigned char *b1, const unsigned char *b2, unsigned int nMax) {
+	//compare nAbsoluteMax bytes, do not perform any looping.
+	unsigned int nSame = 0;
+	while (nMax > 0) {
+		if (*(b1++) != *(b2++)) break;
+		nMax--;
+		nSame++;
+	}
+	return nSame;
+}
+
+static unsigned int CxiLzSearch(CxiLzState *state, unsigned int *pDistance) {
+	unsigned int nBytesLeft = state->size - state->pos;
+	if (nBytesLeft < 3 || nBytesLeft < state->minLength) {
+		*pDistance = 0;
+		return 1;
+	}
+
+	unsigned int firstMatch = state->symLookup[CxiLzHash3(state->buffer + state->pos)];
+	if (firstMatch == UINT_MAX) {
+		//return byte literal
+		*pDistance = 0;
+		return 1;
+	}
+
+	unsigned int distance = firstMatch + 1;
+	unsigned int bestLength = 1, bestDistance = 0;
+
+	unsigned int nMaxCompare = state->maxLength;
+	if (nMaxCompare > nBytesLeft) nMaxCompare = nBytesLeft;
+
+	//search backwards
+	const unsigned char *curp = state->buffer + state->pos;
+	while (distance <= state->maxDistance) {
+		//check only if distance is at least minDistance
+		if (distance >= state->minDistance) {
+			unsigned int matchLen = CxiCompareMemory(curp - distance, curp, nMaxCompare);
+
+			if (matchLen > bestLength) {
+				bestLength = matchLen;
+				bestDistance = distance;
+				if (bestLength == nMaxCompare) break;
+			}
+		}
+
+		if (distance == state->maxDistance) break;
+		unsigned int next = CxiLzStateGetChain(state, distance);
+		if (next == UINT_MAX) break;
+		distance += next;
+	}
+
+	if (bestLength < state->minLength) {
+		bestLength = 1;
+		distance = 0;
+	}
+	*pDistance = bestDistance;
+	return bestLength;
 }
 
 
@@ -122,38 +216,35 @@ static inline unsigned int CxiLzTokenCost(unsigned int length) {
 }
 
 
-static unsigned char *CxCompressLZCommon(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize, unsigned int minDistance) {
-	//create node list
+unsigned char *CxCompressLZCommon(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize, unsigned int minDistance) {
+	CxiLzState state;
+	CxiLzStateInit(&state, buffer, size, LZ_MIN_LENGTH, LZ_MAX_LENGTH, minDistance, LZ_MAX_DISTANCE);
+
+	//create node list and fill in the maximum string reference sizes
 	CxiLzNode *nodes = (CxiLzNode *) calloc(size, sizeof(CxiLzNode));
-	if (nodes == NULL) return NULL;
+	unsigned int pos = 0;
+	while (pos < size) {
+		unsigned int dst;
+		unsigned int len = CxiLzSearch(&state, &dst);
+
+		//store longest found match
+		nodes[pos].length = len;
+		nodes[pos].distance = dst;
+
+		pos++;
+		CxiLzStateSlide(&state, 1);
+	}
+	CxiLzStateFree(&state);
 
 	//work backwards from the end of file
-	unsigned int pos = size;
-	while (pos) {
-		//decrement
-		pos--;
-
+	pos = size;
+	while (pos--) {
 		//get node at pos
 		CxiLzNode *node = nodes + pos;
 
-		//optimization: limit max search length towards end of file
-		unsigned int maxSearchLen = LZ_MAX_LENGTH;
-		if (maxSearchLen > (size - pos)) maxSearchLen = size - pos;
-		if (maxSearchLen < LZ_MIN_LENGTH) maxSearchLen = 1;
-
 		//search for largest LZ string match
-		unsigned int len, dist;
-		if (maxSearchLen >= LZ_MIN_LENGTH) {
-			len = CxiSearchLZ(buffer + pos, size, pos, minDistance, LZ_MAX_DISTANCE, maxSearchLen, &dist);
-		} else {
-			//dummy
-			len = 1, dist = 1;
-		}
-
-		//if len < LZ_MIN_LENGTH, treat as literal byte node.
-		if (len == 0 || len < LZ_MIN_LENGTH) {
-			len = 1;
-		}
+		unsigned int len = nodes[pos].length;
+		unsigned int dist = nodes[pos].distance;
 
 		//if node takes us to the end of file, set weight to cost of this node.
 		if ((pos + len) == size) {
@@ -193,11 +284,6 @@ static unsigned char *CxCompressLZCommon(const unsigned char *buffer, unsigned i
 
 	//encode LZ data
 	unsigned char *buf = (unsigned char *) calloc(maxCompressed, 1);
-	if (buf == NULL) {
-		free(nodes);
-		return NULL;
-	}
-	
 	unsigned char *bufpos = buf;
 	*(uint32_t *) (bufpos) = (size << 8) | 0x10;
 	bufpos += 4;
@@ -237,7 +323,7 @@ static unsigned char *CxCompressLZCommon(const unsigned char *buffer, unsigned i
 
 	unsigned int outSize = bufpos - buf;
 	*compressedSize = outSize;
-	return realloc(buf, outSize); //reduce buffer size
+	return CxiShrink(buf, outSize); //reduce buffer size
 }
 
 
@@ -286,38 +372,35 @@ static inline unsigned int CxiLzxTokenCost(unsigned int length) {
 }
 
 
-static unsigned char *CxCompressLZXCommon(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize, unsigned int minDistance) {
-	//create node list
+unsigned char *CxCompressLZXCommon(const unsigned char *buffer, unsigned int size, unsigned int *compressedSize, unsigned int minDistance) {
+	CxiLzState state;
+	CxiLzStateInit(&state, buffer, size, LZX_MIN_LENGTH, LZX_MAX_LENGTH_3, minDistance, LZX_MAX_DISTANCE);
+
+	//create node list and fill in the maximum string reference sizes
 	CxiLzNode *nodes = (CxiLzNode *) calloc(size, sizeof(CxiLzNode));
-	if (nodes == NULL) return NULL;
+	unsigned int pos = 0;
+	while (pos < size) {
+		unsigned int dst;
+		unsigned int len = CxiLzSearch(&state, &dst);
+
+		//store longest found match
+		nodes[pos].length = len;
+		nodes[pos].distance = dst;
+
+		pos++;
+		CxiLzStateSlide(&state, 1);
+	}
+	CxiLzStateFree(&state);
 
 	//work backwards from the end of file
-	unsigned int pos = size;
-	while (pos) {
-		//decrement
-		pos--;
-
+	pos = size;
+	while (pos--) {
 		//get node at pos
 		CxiLzNode *node = nodes + pos;
 
-		//optimization: limit max search length towards end of file
-		unsigned int maxSearchLen = LZX_MAX_LENGTH_3;
-		if (maxSearchLen > (size - pos)) maxSearchLen = size - pos;
-		if (maxSearchLen < LZX_MIN_LENGTH) maxSearchLen = 1;
-
-		//search for largest LZ string match
-		unsigned int len, dist;
-		if (maxSearchLen >= LZX_MIN_LENGTH) {
-			len = CxiSearchLZ(buffer + pos, size, pos, minDistance, LZX_MAX_DISTANCE, maxSearchLen, &dist);
-		} else {
-			//dummy
-			len = 1, dist = 1;
-		}
-
-		//if len < LZX_MIN_LENGTH, treat as literal byte node.
-		if (len == 0 || len < LZX_MIN_LENGTH) {
-			len = 1;
-		}
+		//read out longest match
+		unsigned int len = node->length;
+		unsigned int dist = node->distance;
 
 		//if node takes us to the end of file, set weight to cost of this node.
 		if ((pos + len) == size) {
@@ -357,11 +440,6 @@ static unsigned char *CxCompressLZXCommon(const unsigned char *buffer, unsigned 
 
 	//encode LZ data
 	unsigned char *buf = (unsigned char *) calloc(maxCompressed, 1);
-	if (buf == NULL) {
-		free(nodes);
-		return NULL;
-	}
-	
 	unsigned char *bufpos = buf;
 	*(uint32_t *) (bufpos) = (size << 8) | 0x11;
 	bufpos += 4;
@@ -380,7 +458,7 @@ static unsigned char *CxCompressLZXCommon(const unsigned char *buffer, unsigned 
 			if (CxiLzxNodeIsReference(curnode)) {
 				//node is reference
 				head |= 1 << (7 - i);
-				
+
 				uint32_t enc = (distance - LZX_MIN_DISTANCE) & 0xFFF;
 				if (length >= LZX_MIN_LENGTH_3) {
 					enc |= ((length - LZX_MIN_LENGTH_3) << 12) | (1 << 28);
@@ -416,7 +494,7 @@ static unsigned char *CxCompressLZXCommon(const unsigned char *buffer, unsigned 
 
 	unsigned int outSize = bufpos - buf;
 	*compressedSize = outSize;
-	return realloc(buf, outSize); //reduce buffer size
+	return CxiShrink(buf, outSize); // reduce buffer size
 }
 
 
