@@ -77,7 +77,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.5.0.1"
+#define VERSION "1.5.1.0"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -124,6 +124,7 @@ static const char *g_helpString = ""
 	"   -ot     Output as NNS TGA\n"
 	"   -tt     Trim the texture in the T axis if its height is not a power of 2\n"
 	"   -fp <f> Specify fixed palette file\n"
+	"   -fpo    Outputs the fixed palette among other output files when used\n"
 	"\n"
 	"Compression Options:\n"
 	"   -cbios  Enable use of all BIOS compression types (valid for binary, C, GRF)\n"
@@ -719,6 +720,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int noLimitPaletteSize = 0;         // disable 4x4 compression palette size limit (up to 32k colors)
 	int tex4x4Threshold = 0;            // 4x4 compression threshold of mergence
 	int trimT = 0;                      // trim texture in the T axis if not a power of 2 in height
+	int outFixedPalette = 0;            // output fixed palette among other output files
 	
 	//Compression settings
 	CxCompressionPolicy compressionPolicy = 0;
@@ -841,6 +843,8 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-fp")) == 0) {
 			i++;
 			if (i < argc) fixedPalette = argv[i];
+		} else if (_tcscmp(arg, _T("-fpo")) == 0) {
+			outFixedPalette = 1;
 		} else if (_tcscmp(arg, _T("-ot")) == 0) {
 			outMode = PTC_OUT_MODE_NNSTGA;
 		} else if (_tcscmp(arg, _T("-ct")) == 0) {
@@ -1396,7 +1400,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
 			//output palette if not direct
-			if (format != CT_DIRECT && fixedPalette == NULL) {
+			if (format != CT_DIRECT && (fixedPalette == NULL || outFixedPalette)) {
 				memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(nameBuffer, _T("wb"));
 				PtcEmitBinaryData(fp, texture.palette.pal, texture.palette.nColors * sizeof(COLOR), compressionPolicy);
