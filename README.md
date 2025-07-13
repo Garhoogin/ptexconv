@@ -44,6 +44,7 @@ This is the command line version of the background and texture converson functio
   	   -ot     Output as NNS TGA
        -tt     Trim the texture in the T axis if its height is not a power of 2
        -fp <f> Specify fixed palette file
+       -fpo    Outputs the fixed palette among other output files when used
 
     Compression Options:
        -cbios  Enable use of all BIOS compression types (valid for binary, C, GRF)
@@ -78,6 +79,8 @@ Lastly, to do BG color reduction but output as a standard BMP file, use the `-od
 
 ## Texture Conversion Options
 Texture conversion has a couple switches of its own. Use `-f` followed by a format name (or number) to select a texture format to use. Use the `-fp` option followed by a path to a (raw) palette file to instruct the program to use this palette file when generating texture data. Lastly, the `-ot` option tells ptexconv to output a file as an NNS TGA file (for use with NNS plugins).
+
+When using a fixed palette, the palette file is read (and assumed not to be compressed) and used for the color reduction process without being modified. By default, a palette file is not output when outputting raw binary data with a fixed palette. If output of the palette file is required, you may additionally use the `-fpo` option.
 
 ## Compression Options
 By default, output files are not compresed. Compression settings are valid for binary files, C source files, and GRF files. For C source files, the compression is applied to the data before writing C source output. For binary files, the whole file is compressed. For GRF files, the file's binary blocks are independently compressed.
