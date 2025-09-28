@@ -9,6 +9,7 @@
 #include "palette.h"
 #include "bggen.h"
 #include "grf.h"
+#include "gdip.h"
 
 //ensure TCHAR and related macros are defined
 #ifdef _WIN32
@@ -36,9 +37,7 @@
 #endif //_MSC_VER
 
 //make sure we have an image I/O provider
-#ifdef _MSC_VER
-#   include "gdip.h"
-#else
+#ifndef _MSC_VER
 #   define STB_IMAGE_IMPLEMENTATION
 #   include "stb_image.h"
 #endif
@@ -77,7 +76,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.5.1.0"
+#define VERSION "1.5.2.0"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -274,6 +273,7 @@ void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	int height = TEXH(texels->texImageParam);
 	COLOR32 *pixels = (COLOR32 *) calloc(width * height, sizeof(COLOR32));
 	TxRender(pixels, width, height, texels, palette, 1);
+	ImgSwapRedBlue(pixels, width, height);
 
 	unsigned char header[] = { 0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,
 		'N', 'N', 'S', '_', 'T', 'g', 'a', ' ', 'V', 'e', 'r', ' ', '1', '.', '0', 0, 0, 0, 0, 0 };
@@ -306,7 +306,7 @@ void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	//palette (if applicable)
 	if (FORMAT(texels->texImageParam) != CT_DIRECT) {
 		fwrite("nns_pnam", 8, 1, fp);
-		uint32_t pnamLength = strnlen(palette->name, 16) + 0xC;
+		uint32_t pnamLength = strlen(palette->name) + 0xC;
 		fwrite(&pnamLength, 4, 1, fp);
 		fwrite(palette->name, 1, pnamLength - 0xC, fp);
 
@@ -1337,7 +1337,7 @@ int _tmain(int argc, TCHAR **argv) {
 		params.balance = balance;
 		params.colorBalance = colorBalance;
 		params.enhanceColors = enhanceColors;
-		memset(params.pnam, 0, sizeof(params.pnam));
+		params.pnam = (char *) calloc(1, 1);
 
 		if (fixedPalette != NULL) {
 			size_t nRead;
@@ -1525,3 +1525,4 @@ int Entry(PVOID Peb) {
 }
 
 #endif
+

@@ -204,7 +204,7 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, in
 	unsigned char *flips = (unsigned char *) calloc(nTiles * nTiles, 1); //how must each tile be manipulated to best match its partner
 
 	RxReduction *reduction = (RxReduction *) calloc(1, sizeof(RxReduction));
-	RxInit(reduction, balance, colorBalance, 15, 0, 255);
+	RxInit(reduction, balance, colorBalance, 0, 255);
 	for (int i = 0; i < nTiles; i++) {
 		BgTile *t1 = tiles + i;
 		for (int j = 0; j < i; j++) {
@@ -376,7 +376,7 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, in
 		//now, match colors to indices.
 		COLOR32 *pal = palette + (bestPalette << nBits);
 		RxReduceImageEx(tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset,
-			paletteSize - !paletteOffset, 0, 1, 0, 0.0f, balance, colorBalance, 0);
+			paletteSize - !paletteOffset, RX_FLAG_ALPHA_MODE_NONE | RX_FLAG_PRESERVE_ALPHA, 0.0f, balance, colorBalance, 0);
 		for (int j = 0; j < 64; j++) {
 			COLOR32 col = tile->px[j];
 			int index = 0;
@@ -408,7 +408,7 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, in
 
 void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int paletteSize, int nPalettes, int paletteBase, int paletteOffset, int dither, float diffuse, int balance, int colorBalance, int enhanceColors) {
 	RxReduction *reduction = (RxReduction *) calloc(1, sizeof(RxReduction));
-	RxInit(reduction, balance, colorBalance, 15, enhanceColors, paletteSize);
+	RxInit(reduction, balance, colorBalance, enhanceColors, paletteSize);
 
 	if (!dither) diffuse = 0.0f;
 	for (int i = 0; i < nTiles; i++) {
@@ -435,7 +435,7 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 		COLOR32 *pal = palette + (bestPalette << nBits);
 
 		//do optional dithering (also matches colors at the same time)
-		RxReduceImageEx(tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset, FALSE, TRUE, FALSE, diffuse, balance, colorBalance, enhanceColors);
+		RxReduceImageEx(tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset, RX_FLAG_ALPHA_MODE_NONE | RX_FLAG_PRESERVE_ALPHA, diffuse, balance, colorBalance, enhanceColors);
 		for (int j = 0; j < 64; j++) {
 			COLOR32 col = tile->px[j];
 			int index = 0;
@@ -534,9 +534,9 @@ void BgGenerate(COLOR *pOutPalette, unsigned char **pOutChars, unsigned short **
 	//by default the palette generator only enforces palette density, but not
 	//the actual truncating of RGB values. Do that here. This will also be
 	//important when fixed palettes are allowed.
-	for (int i = 0; i < 256 * 16; i++) {
-		palette[i] = ColorConvertFromDS(ColorConvertToDS(palette[i]));
-	}
+	//for (int i = 0; i < 256 * 16; i++) {
+	//	palette[i] = ColorRoundToDS15(palette[i]);
+	//}
 
 	//split image into 8x8 tiles.
 	for (int y = 0; y < tilesY; y++) {
@@ -740,7 +740,7 @@ void BgAssemble(COLOR32 *imgBits, int width, int height, int nBits, COLOR *pals,
 	//init params and convert palette
 	RxYiqColor *paletteYiq = (RxYiqColor *) calloc(nPalettes << nBits, sizeof(RxYiqColor));
 	RxReduction *reduction = (RxReduction *) calloc(1, sizeof(RxReduction));
-	RxInit(reduction, balance, colorBalance, 15, enhanceColors, (1 << nBits) - 1);
+	RxInit(reduction, balance, colorBalance, enhanceColors, (1 << nBits) - 1);
 	for (int i = 0; i < (nPalettes << nBits); i++) {
 		RxConvertRgbToYiq(ColorConvertFromDS(pals[i]), &paletteYiq[i]);
 	}
@@ -813,3 +813,4 @@ void BgAssemble(COLOR32 *imgBits, int width, int height, int nBits, COLOR *pals,
 	*pOutScreen = screen;
 	*outScreenSize = (tilesX * tilesY) * 2;
 }
+

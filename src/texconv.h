@@ -6,13 +6,15 @@
 //
 typedef struct TxConversionParameters_ {
 	COLOR32 *px;
-	int width;
-	int height;
+	unsigned int width;
+	unsigned int height;
 	int fmt;
+	int forTwl;
 	int dither;
 	float diffuseAmount;
 	int ditherAlpha;
-	int colorEntries;
+	int c0xp;
+	unsigned int colorEntries;
 	int useFixedPalette;
 	COLOR *fixedPalette;
 	int threshold;
@@ -22,13 +24,13 @@ typedef struct TxConversionParameters_ {
 	TEXTURE *dest;
 	void (*callback) (void *);
 	void *callbackParam;
-	char pnam[17];
+	char *pnam;
 } TxConversionParameters;
 
 //
 // Counts the number of colors in an image (transparent counts as a color)
 //
-int ImgCountColors(COLOR32 *px, int nPx);
+unsigned int ImgCountColors(const COLOR32 *px, unsigned int nPx);
 
 //
 // Convert an image to a direct mode texture
@@ -59,3 +61,4 @@ int TxConvert4x4(TxConversionParameters *params);
 // Convert a texture given some input parameters.
 //
 int TxConvert(TxConversionParameters *params);
+
