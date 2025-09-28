@@ -37,10 +37,8 @@
 #endif //_MSC_VER
 
 //make sure we have an image I/O provider
-#ifndef _MSC_VER
-#   define STB_IMAGE_IMPLEMENTATION
-#   include "stb_image.h"
-#endif
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #define MODE_BG      0
 #define MODE_TEXTURE 1
