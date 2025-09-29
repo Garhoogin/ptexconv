@@ -43,6 +43,8 @@ This is the command line version of the background and texture converson functio
        -ct <n> Set tex4x4 palette compression strength [0, 100] (default 0).
   	   -ot     Output as NNS TGA
        -tt     Trim the texture in the T axis if its height is not a power of 2
+       -t0x    Color 0 is transparent (defuault: inferred)
+       -t0o    Color 0 is opaque      (default: inferred)
        -fp <f> Specify fixed palette file
        -fpo    Outputs the fixed palette among other output files when used
 
@@ -81,6 +83,8 @@ Lastly, to do BG color reduction but output as a standard BMP file, use the `-od
 Texture conversion has a couple switches of its own. Use `-f` followed by a format name (or number) to select a texture format to use. Use the `-fp` option followed by a path to a (raw) palette file to instruct the program to use this palette file when generating texture data. Lastly, the `-ot` option tells ptexconv to output a file as an NNS TGA file (for use with NNS plugins).
 
 When using a fixed palette, the palette file is read (and assumed not to be compressed) and used for the color reduction process without being modified. By default, a palette file is not output when outputting raw binary data with a fixed palette. If output of the palette file is required, you may additionally use the `-fpo` option.
+
+When using palette4, palette16 or palette256 texture formats, color index 0 is made the transparent color if there exists at least one pixel in the input image with an alpha value of less than half. The color 0 mode can be overridden using the `-t0x` or `-t0o` options. Specify `-t0x` to reserve color 0 for transparency, or `-t0o` to use it as an opaque color.
 
 ## Compression Options
 By default, output files are not compresed. Compression settings are valid for binary files, C source files, and GRF files. For C source files, the compression is applied to the data before writing C source output. For binary files, the whole file is compressed. For GRF files, the file's binary blocks are independently compressed.
