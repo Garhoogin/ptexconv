@@ -869,25 +869,6 @@ static void RxiTreeCleanEmptyNode(RxColorNode *treeHead, RxColorNode *node) {
 	RxiTreeFree(node, TRUE);
 }
 
-static void RxiTreeAdjustOneChildNodes(RxColorNode *tree) {
-	if (tree->left == NULL && tree->right == NULL) return;
-
-	//children
-	if (tree->left != NULL) RxiTreeAdjustOneChildNodes(tree->left);
-	if (tree->right != NULL) RxiTreeAdjustOneChildNodes(tree->right);
-
-	//scenarios where one child node exists
-	RxColorNode *pTake = NULL;
-	if (tree->left != NULL && tree->right == NULL) pTake = tree->left;
-	if (tree->right != NULL && tree->left == NULL) pTake = tree->right;
-
-	if (pTake != NULL) {
-		//copy info from taken node
-		memcpy(tree, pTake, sizeof(RxColorNode));
-		free(pTake); // do NOT RxiTreeFree. We still want its children!
-	}
-}
-
 static RxColorNode **RxiAddTreeToList(const RxColorNode *node, RxColorNode **list) {
 	if (node->left == NULL && node->right == NULL) {
 		//leaf node
@@ -1377,7 +1358,7 @@ double RxHistComputePaletteErrorYiq(RxReduction *reduction, const RxYiqColor *pa
 }
 
 double RxHistComputePaletteError(RxReduction *reduction, const COLOR32 *palette, unsigned int nColors, double maxError) {
-	RxYiqColor yiqPaletteStack[16];
+	RxYiqColor yiqPaletteStack[16] = { 0 };
 	RxYiqColor *yiqPalette = yiqPaletteStack;
 	if (nColors > 16) {
 		yiqPalette = (RxYiqColor *) calloc(nColors, sizeof(RxYiqColor));
@@ -1653,7 +1634,6 @@ void RxCreateMultiplePalettesEx(const COLOR32 *imgBits, unsigned int tilesX, uns
 	int nPalettesWritten = 0;
 	int outputOffs = max(paletteOffset, 1);
 	COLOR32 *palettes = (COLOR32 *) calloc(RX_TILE_PALETTE_COUNT_MAX * RX_TILE_PALETTE_MAX, sizeof(COLOR32));
-	int paletteIndices[RX_TILE_PALETTE_COUNT_MAX] = { 0 };
 
 	for (unsigned int i = 0; i < nTiles; i++) {
 		RxiTile *t = &tiles[i];
@@ -1670,7 +1650,6 @@ void RxCreateMultiplePalettesEx(const COLOR32 *imgBits, unsigned int tilesX, uns
 		RxComputePalette(reduction);
 		
 		memcpy(palettes + nPalettesWritten * RX_TILE_PALETTE_MAX, reduction->paletteRgb, (RX_TILE_PALETTE_MAX - 1) * sizeof(COLOR32));
-		paletteIndices[nPalettesWritten++] = i;
 		(*progress)++;
 	}
 
@@ -2048,4 +2027,3 @@ double RxComputePaletteError(RxReduction *reduction, const COLOR32 *px, unsigned
 	if (paletteYiq != paletteYiqStack) free(paletteYiq);
 	return error;
 }
-

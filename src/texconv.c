@@ -341,7 +341,7 @@ double TxiTestStepEndpoints(RxReduction *reduction, COLOR32 *px, int nPx, int tr
 
 void TxiComputeEndpoints(RxReduction *reduction, COLOR32 *px, int nPx, COLOR32 *colorMin, COLOR32 *colorMax) {
 	//if only 1 or 2 colors, fill the palette with those.
-	COLOR32 colors[2];
+	COLOR32 colors[2] = { 0 };
 	int nColors = 0;
 	int transparent = 0;
 	for (int i = 0; i < nPx; i++) {
@@ -1102,7 +1102,7 @@ static int TxiRefinePalette(RxReduction *reduction, TxTileData *tiles, uint32_t 
 
 			//for 1-color palettes, there is no restriction on where it can go
 			//for 2-color palettes and above, the base must be even (required for interpolation)
-			int slottedIndex = 0, nColorsAvailable = nPaletteColors;
+			int slottedIndex = 0;
 			if (nPaletteColors == 1 && nSingleAvailable > 0) {
 				//if we have singles available, slot the color into one of them
 				for (int j = 0; j < paletteSize; j++) {
@@ -1236,8 +1236,6 @@ int TxConvert4x4(TxConversionParameters *params) {
 	uint32_t *txel = (uint32_t *) calloc(tilesX * tilesY, 4);
 	float diffuse = params->dither ? params->diffuseAmount : 0.0f;
 	for (unsigned int i = 0; i < tilesX * tilesY; i++) {
-		uint32_t texel = 0;
-
 		//double check that these settings are the most optimal for this tile.
 		double err = 0.0;
 		uint16_t idx = TxiFindOptimalPidx(reduction, tileData + i, nnsPal, nUsedColors, 0, &err);
@@ -1343,4 +1341,3 @@ int TxConvert(TxConversionParameters *params) {
 	if (params->pnam != NULL) free(params->pnam);
 	return 0;
 }
-

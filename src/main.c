@@ -74,7 +74,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.5.2.0"
+#define VERSION "1.5.2.1"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -120,6 +120,8 @@ static const char *g_helpString = ""
 	"   -ct <n> Set tex4x4 palette compresion strength [0, 100] (default 0).\n"
 	"   -ot     Output as NNS TGA\n"
 	"   -tt     Trim the texture in the T axis if its height is not a power of 2\n"
+	"   -t0x    Color 0 is transparent     (default: inferred)\n"
+	"   -t0o    Color 0 is not transparent (default: inferred)\n"
 	"   -fp <f> Specify fixed palette file\n"
 	"   -fpo    Outputs the fixed palette among other output files when used\n"
 	"\n"
@@ -719,6 +721,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int tex4x4Threshold = 0;            // 4x4 compression threshold of mergence
 	int trimT = 0;                      // trim texture in the T axis if not a power of 2 in height
 	int outFixedPalette = 0;            // output fixed palette among other output files
+	int c0xp = -1;                      // is color 0 transparent reserved?
 	
 	//Compression settings
 	CxCompressionPolicy compressionPolicy = 0;
@@ -850,6 +853,12 @@ int _tmain(int argc, TCHAR **argv) {
 			if (i < argc) tex4x4Threshold = _ttoi(argv[i]);
 		} else if (_tcscmp(arg, _T("-tt")) == 0) {
 			trimT = 1;
+		} else if (_tcscmp(arg, _T("-t0o")) == 0) {
+			//color 0 is not transparent
+			c0xp = 0;
+		} else if (_tcscmp(arg, _T("-t0x")) == 0) {
+			//color 0 is transparent
+			c0xp = 1;
 		}
 		
 		//compression switch
@@ -1301,6 +1310,22 @@ int _tmain(int argc, TCHAR **argv) {
 					break;
 			}
 		}
+
+		//infer color 0 mode
+		if (c0xp == -1) {
+			c0xp = 0;
+			
+			if (format == CT_4COLOR || format == CT_16COLOR || CT_256COLOR) {
+				for (int i = 0; i < width * height; i++) {
+					unsigned int a = px[i] >> 24;
+					if (a < 0x80) {
+						c0xp = 1; // transparent pixel presence
+						break;
+					}
+				}
+			}
+		}
+		
 		if (format == CT_4x4 && noLimitPaletteSize) {
 			//set high palette size (effectively no limit)
 			nMaxColors = 32768;
@@ -1331,6 +1356,7 @@ int _tmain(int argc, TCHAR **argv) {
 		params.width = width;
 		params.height = height;
 		params.px = px;
+		params.c0xp = c0xp;
 		params.threshold = tex4x4Threshold;
 		params.balance = balance;
 		params.colorBalance = colorBalance;
@@ -1352,7 +1378,7 @@ int _tmain(int argc, TCHAR **argv) {
 			(void) nRead;
 			fclose(fp);
 
-			if (params.colorEntries > (size >> 1)) {
+			if (params.colorEntries > (unsigned int) (size >> 1)) {
 				params.colorEntries = size >> 1;
 				if (!silent) printf("Color count truncated to %d.\n", params.colorEntries);
 			}
@@ -1523,4 +1549,3 @@ int Entry(PVOID Peb) {
 }
 
 #endif
-
