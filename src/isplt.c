@@ -40,12 +40,13 @@
 #define TRUE 1
 #define FALSE 0
 
-#define RX_LARGE_NUMBER          1e32 // constant to represent large color difference
-#define RX_SLAB_SIZE         0x100000 // slab size of allocator
-#define INV_512 0.0019531250000000000 // 1.0/512.0
-#define INV_511 0.0019569471624266144 // 1.0/511.0
-#define INV_255 0.0039215686274509800 // 1.0/255.0
-#define INV_3   0.3333333333333333333 // 1.0/  3.0
+#define RX_LARGE_NUMBER             1e32 // constant to represent large color difference
+#define RX_SLAB_SIZE            0x100000 // slab size of allocator
+#define INV_512    0.0019531250000000000 // 1.0/512.0
+#define INV_511    0.0019569471624266144 // 1.0/511.0
+#define INV_255    0.0039215686274509800 // 1.0/255.0
+#define INV_3      0.3333333333333333333 // 1.0/  3.0
+#define TWO_THIRDS 0.6666666666666666667 // 2.0/  3.0
 
 //struct for internal processing of color leaves
 typedef struct {
@@ -202,45 +203,35 @@ static void RxHistAddColor(RxReduction *reduction, int y, int i, int q, int a, d
 }
 
 void RxConvertRgbToYiq(COLOR32 rgb, RxYiqColor *yiq) {
-	double doubleR = (double) ((rgb >>  0) & 0xFF);
-	double doubleG = (double) ((rgb >>  8) & 0xFF);
-	double doubleB = (double) ((rgb >> 16) & 0xFF);
+	double r = (double) ((rgb >>  0) & 0xFF);
+	double g = (double) ((rgb >>  8) & 0xFF);
+	double b = (double) ((rgb >> 16) & 0xFF);
 
-	double y = 2.0 * (doubleR * 0.29900 + doubleG * 0.58700 + doubleB * 0.11400);
-	double i = 2.0 * (doubleR * 0.59604 - doubleG * 0.27402 - doubleB * 0.32203);
-	double q = 2.0 * (doubleR * 0.21102 - doubleG * 0.52204 + doubleB * 0.31103);
-	double iCopy = i;
+	//twice the standard RGB->YIQ matrix (doubles output components)
+	double y = r * 0.59800 + g * 1.17400 + b * 0.22800;
+	double i = r * 1.19208 - g * 0.54804 - b * 0.64406;
+	double q = r * 0.42204 - g * 1.04408 + b * 0.62206;
 
-	if (iCopy > 245.0) {
-		iCopy = 2 * (iCopy - 245.0) * INV_3 + 245.0;
-	}
+	if (i >  245.0) i = (i - 245.0) * TWO_THIRDS + 245.0;
+	if (q < -215.0) q = (q + 215.0) * TWO_THIRDS - 215.0;
 
-	if (q < -215.0) {
-		q = 2 * (q + 215.0) * INV_3 - 215.0;
-	}
-
-	double iqDiff = q - iCopy;
+	double iqDiff = q - i;
 	if (iqDiff > 265.0) {
-		double iqDiffShifted = (iqDiff - 265.0) * 0.25;
-		iCopy += iqDiffShifted;
-		q -= iqDiffShifted;
+		double diq = (iqDiff - 265.0) * 0.25;
+		i += diq;
+		q -= diq;
 	}
 
-	if (iCopy < 0.0 && q > 0.0) y -= (q * iCopy) * INV_512;
+	if (i < 0.0 && q > 0.0) y -= (q * i) * INV_512;
 
-	//round to integers
-	int yInt = (int) (y + 0.5);
-	int iInt = (int) (i + (i < 0.0 ? -0.5 : 0.5));
-	int qInt = (int) (q + (q < 0.0 ? -0.5 : 0.5));
-
-	//write clamped color
-	yiq->y = min(max(yInt,    0), 511);
-	yiq->i = min(max(iInt, -320), 319);
-	yiq->q = min(max(qInt, -270), 269);
+	//write rounded color
+	yiq->y = (int) (y + 0.5);                    //    0 - 511
+	yiq->i = (int) (i + (i < 0.0 ? -0.5 : 0.5)); // -320 - 319
+	yiq->q = (int) (q + (q < 0.0 ? -0.5 : 0.5)); // -270 - 269
 	yiq->a = (rgb >> 24) & 0xFF;
 }
 
-void RxConvertYiqToRgb(RxRgbColor *rgb, const RxYiqColor *yiq) {
+COLOR32 RxConvertYiqToRgb(const RxYiqColor *yiq) {
 	double i = (double) yiq->i;
 	double q = (double) yiq->q;
 	double y = (double) yiq->y;
@@ -251,24 +242,23 @@ void RxConvertYiqToRgb(RxRgbColor *rgb, const RxYiqColor *yiq) {
 
 	double iqDiff = q - i;
 	if (iqDiff > 265.0) {
-		iqDiff = (iqDiff - 265.0) * 0.5;
-		i -= iqDiff;
-		q += iqDiff;
+		double diq = (iqDiff - 265.0) * 0.5;
+		i -= diq;
+		q += diq;
 	}
 
-	if (q < -215.0) {
-		q = (q + 215.0) * 3.0 * 0.5 - 215.0;
-	}
+	if (q < -215.0) q = (q + 215.0) * 1.5 - 215.0;
+	if (i >  245.0) i = (i - 245.0) * 1.5 + 245.0;
 
 	int r = (int) (y * 0.5 + i * 0.477791 + q * 0.311426 + 0.5);
 	int g = (int) (y * 0.5 - i * 0.136066 - q * 0.324141 + 0.5);
 	int b = (int) (y * 0.5 - i * 0.552535 + q * 0.852230 + 0.5);
 
-	//write clamped color
-	rgb->r = min(max(r, 0), 255);
-	rgb->g = min(max(g, 0), 255);
-	rgb->b = min(max(b, 0), 255);
-	rgb->a = yiq->a;
+	//pack clamped color
+	r = min(max(r, 0), 255);
+	g = min(max(g, 0), 255);
+	b = min(max(b, 0), 255);
+	return r | (g << 8) | (b << 16) | (yiq->a << 24);
 }
 
 static inline double RxiDelinearizeLuma(RxReduction *reduction, double luma) {
@@ -276,9 +266,7 @@ static inline double RxiDelinearizeLuma(RxReduction *reduction, double luma) {
 }
 
 static inline COLOR32 RxiMaskYiqToRgb(RxReduction *reduction, const RxYiqColor *yiq) {
-	RxRgbColor rgb;
-	RxConvertYiqToRgb(&rgb, yiq);
-	return reduction->maskColors(rgb.r | (rgb.g << 8) | (rgb.b << 16) | (rgb.a << 24));
+	return reduction->maskColors(RxConvertYiqToRgb(yiq));
 }
 
 static inline double RxiComputeColorDifference(RxReduction *reduction, const RxYiqColor *yiq1, const RxYiqColor *yiq2) {
@@ -347,26 +335,40 @@ void RxHistAdd(RxReduction *reduction, const COLOR32 *img, unsigned int width, u
 		reduction->histogram = (RxHistogram *) calloc(1, sizeof(RxHistogram));
 		reduction->histogram->firstSlot = 0x20000;
 	}
+	
+	if (width == 0 || height == 0) return;
 
 	for (unsigned int y = 0; y < height; y++) {
-		RxYiqColor yiqLeft;
-		RxConvertRgbToYiq(img[y * width], &yiqLeft);
-		int yLeft = yiqLeft.y, aLeft = yiqLeft.a;
+		//track block of 3 pixels
+		RxYiqColor rowBlock[3];
+		RxConvertRgbToYiq(img[y * width + 0], &rowBlock[0]);     // left
+		memcpy(&rowBlock[1], &rowBlock[0], sizeof(RxYiqColor));  // center
+		memcpy(&rowBlock[2], &rowBlock[1], sizeof(RxYiqColor));  // right
 
 		for (unsigned int x = 0; x < width; x++) {
-			RxYiqColor yiq;
-			RxConvertRgbToYiq(img[x + y * width], &yiq);
+			//fill right pixel
+			if ((x + 1) < width) {
+				RxConvertRgbToYiq(img[y * width + x + 1], &rowBlock[2]);
+			}
 
-			//when the left pixel is transparent, treat it as same Y value.
-			if (aLeft == 0) yLeft = yiq.y;
+			//top and bottom pixel
+			RxYiqColor top, bottom;
+			if (y > 0) RxConvertRgbToYiq(img[(y - 1) * width + x], &top);
+			else memcpy(&top, &rowBlock[1], sizeof(RxYiqColor));
+			if ((y + 1) < height) RxConvertRgbToYiq(img[(y + 1) * width + x], &bottom);
+			else memcpy(&bottom, &rowBlock[1], sizeof(RxYiqColor));
 
-			int dy = yiq.y - yLeft;
-			double weight = (double) (16 - abs(16 - abs(dy)) / 8);
+			//compute weight
+			double yInter = 0.25 * (reduction->lumaTable[rowBlock[0].y] + reduction->lumaTable[rowBlock[1].y] 
+				+ reduction->lumaTable[top.y] + reduction->lumaTable[bottom.y]);
+			double yCenter = reduction->lumaTable[rowBlock[1].y];
+			double yDiff = fabs(yCenter - yInter);
+			double weight = 16.0 - fabs(16.0 - yDiff) / 8.0;
 			if (weight < 1.0) weight = 1.0;
+			RxHistAddColor(reduction, rowBlock[1].y, rowBlock[1].i, rowBlock[1].q, rowBlock[1].a, weight);
 
-			RxHistAddColor(reduction, yiq.y, yiq.i, yiq.q, yiq.a, weight);
-			yLeft = yiq.y;
-			aLeft = yiq.a;
+			//slide row
+			memmove(&rowBlock[0], &rowBlock[1], 2 * sizeof(RxYiqColor));
 		}
 	}
 }
@@ -1788,10 +1790,11 @@ void RxReduceImageWithContext(RxReduction *reduction, COLOR32 *img, int *indices
 	}
 
 	//allocate row buffers for color and diffuse.
-	RxYiqColor *thisRow = (RxYiqColor *) calloc(width + 2, sizeof(RxYiqColor));
-	RxYiqColor *lastRow = (RxYiqColor *) calloc(width + 2, sizeof(RxYiqColor));
-	RxYiqColor *thisDiffuse = (RxYiqColor *) calloc(width + 2, sizeof(RxYiqColor));
-	RxYiqColor *nextDiffuse = (RxYiqColor *) calloc(width + 2, sizeof(RxYiqColor));
+	RxYiqColor *rowbuf = (RxYiqColor *) calloc(4 * (width + 2), sizeof(RxYiqColor));
+	RxYiqColor *thisRow = rowbuf;
+	RxYiqColor *lastRow = thisRow + (width + 2);
+	RxYiqColor *thisDiffuse = lastRow + (width + 2);
+	RxYiqColor *nextDiffuse = thisDiffuse + (width + 2);
 
 	//fill the last row with the first row, just to make sure we don't run out of bounds
 	for (unsigned int i = 0; i < width; i++) {
@@ -1985,13 +1988,10 @@ void RxReduceImageWithContext(RxReduction *reduction, COLOR32 *img, int *indices
 	}
 
 	free(yiqPalette);
-	free(thisRow);
-	free(lastRow);
-	free(thisDiffuse);
-	free(nextDiffuse);
+	free(rowbuf);
 }
 
-double RxComputePaletteError(RxReduction *reduction, const COLOR32 *px, unsigned int nPx, const COLOR32 *pal, unsigned int nColors, int alphaThreshold, double nMaxError) {
+double RxComputePaletteError(RxReduction *reduction, const COLOR32 *px, unsigned int width, unsigned int height, const COLOR32 *pal, unsigned int nColors, double nMaxError) {
 	if (nMaxError == 0) nMaxError = RX_LARGE_NUMBER;
 	double error = 0;
 
@@ -2003,13 +2003,13 @@ double RxComputePaletteError(RxReduction *reduction, const COLOR32 *px, unsigned
 
 	//palette to YIQ
 	for (unsigned int i = 0; i < nColors; i++) {
-		RxConvertRgbToYiq(pal[i], paletteYiq + i);
+		RxConvertRgbToYiq(pal[i], &paletteYiq[i]);
 	}
 
-	for (unsigned int i = 0; i < nPx; i++) {
+	for (unsigned int i = 0; i < (width * height); i++) {
 		COLOR32 p = px[i];
-		int a = (p >> 24) & 0xFF;
-		if (a < alphaThreshold) continue;
+		unsigned int a = (p >> 24) & 0xFF;
+		if (a < reduction->alphaThreshold) continue;
 		p |= 0xFF000000;
 
 		RxYiqColor yiq;

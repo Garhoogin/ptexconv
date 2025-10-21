@@ -74,7 +74,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.5.2.1"
+#define VERSION "1.5.2.2"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -213,15 +213,16 @@ static COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHei
 
 }
 
-static int isTranslucent(COLOR32 *px, int nWidth, int nHeight) {
+static int PtcImageHasTranslucent(const COLOR32 *px, int nWidth, int nHeight) {
 	for (int i = 0; i < nWidth * nHeight; i++) {
-		int a = px[i] >> 24;
+		//alpha values between 5 and 250 do not map to binary alpha values (under a5i3)
+		unsigned int a = px[i] >> 24;
 		if (a >= 5 && a <= 250) return 1;
 	}
 	return 0;
 }
 
-static int PtcAutoSelectTextureFormat(COLOR32 *px, int nWidth, int nHeight) {
+static int PtcAutoSelectTextureFormat(const COLOR32 *px, int nWidth, int nHeight) {
 	//Guess a good format for the data. Default to 4x4.
 	int fmt = CT_4x4;
 
@@ -229,9 +230,9 @@ static int PtcAutoSelectTextureFormat(COLOR32 *px, int nWidth, int nHeight) {
 	if (nWidth * nHeight == 1024 * 1024) fmt = CT_256COLOR;
 
 	//is there translucency?
-	if (isTranslucent(px, nWidth, nHeight)) {
+	if (PtcImageHasTranslucent(px, nWidth, nHeight)) {
 		//then choose a3i5 or a5i3. Do this by using color count.
-		int colorCount = ImgCountColors(px, nWidth * nHeight);
+		int colorCount = ImgCountColorsEx(px, nWidth, nHeight, IMG_CCM_IGNORE_ALPHA | IMG_CCM_NO_COUNT_TRANSPARENT);
 		if (colorCount < 16) {
 			//colors < 16, choose a5i3.
 			fmt = CT_A5I3;
@@ -248,13 +249,15 @@ static int PtcAutoSelectTextureFormat(COLOR32 *px, int nWidth, int nHeight) {
 			fmt = CT_4COLOR;
 		} else {
 			//weigh 16-color, 256-color, and 4x4. 
-			//take the number of pixels per color. 
-			int pixelsPerColor = 2 * nWidth * nHeight / nColors;
-			if (pixelsPerColor >= 3 && !(nWidth * nHeight >= 1024 * 512)) {
+			if ((nWidth * nHeight) <= 1024 * 512) {
+				//under 1024x512/512x1024: use 4x4
 				fmt = CT_4x4;
-			} else if (nColors < 32) {
-				//otherwise, 4x4 probably isn't a good option.
+			} else if (nColors <= 32) {
+				//not more than 32 colors: use palette16
 				fmt = CT_16COLOR;
+			} else {
+				//otherwise, use palette256
+				fmt = CT_256COLOR;
 			}
 		}
 	}
@@ -349,17 +352,17 @@ void PtcWriteBitmap(COLOR32 *palette, unsigned int paletteSize, int *indices, in
 
 	unsigned char header[] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	unsigned char infoHeader[] = {
-		0x28, 0, 0, 0,
-		0, 0, 0, 0, //width
-		0, 0, 0, 0, //height
-		1, 0, //planes
-		0, 0, //depth
-		0, 0, 0, 0, //compression
-		0, 0, 0, 0, //size
-		0x68, 0x10, 0, 0, //ppm X
-		0x68, 0x10, 0, 0, //ppm Y
-		0, 0, 0, 0, //palette size
-		0, 0, 0, 0 //important colors
+		0x28, 0, 0, 0,    // header size
+		0, 0, 0, 0,       // width
+		0, 0, 0, 0,       // height
+		1, 0,             // planes
+		0, 0,             // depth
+		0, 0, 0, 0,       // compression
+		0, 0, 0, 0,       // size
+		0x68, 0x10, 0, 0, // ppm X
+		0x68, 0x10, 0, 0, // ppm Y
+		0, 0, 0, 0,       // palette size
+		0, 0, 0, 0        // important colors
 	};
 
 	int depth = (paletteSize <= 16) ? 4 : 8;
@@ -368,8 +371,8 @@ void PtcWriteBitmap(COLOR32 *palette, unsigned int paletteSize, int *indices, in
 	for (unsigned int i = 0; i < paletteSize; i++) {
 		COLOR32 c = palette[i];
 		paletteData[i * 4 + 0] = (c >> 16) & 0xFF;
-		paletteData[i * 4 + 1] = (c >> 8) & 0xFF;
-		paletteData[i * 4 + 2] = c & 0xFF;
+		paletteData[i * 4 + 1] = (c >>  8) & 0xFF;
+		paletteData[i * 4 + 2] = (c >>  0) & 0xFF;
 	}
 
 	//create bitmap data, don't bother with RLE because it's shit lol
@@ -438,8 +441,8 @@ float mylog2(float d) { //UGLY!
 static int PtcAutoSelectTex4x4ColorCount(int bWidth, int bHeight) {
 	int area = bWidth * bHeight;
 
-	//for textures smaller than 256x256, use 8*sqrt(area)
-	if (area < 256 * 256) {
+	//for textures smaller than 128x128, use 8*sqrt(area)
+	if (area <= 128 * 128) {
 		int nColors = (int) (8 * sqrt((float) area));
 		nColors = (nColors + 15) & ~15;
 		return nColors;
