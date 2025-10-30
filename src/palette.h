@@ -2,6 +2,16 @@
 
 #include "color.h"
 
+//use of intrinsics under x86
+/*#if defined(_M_IX86) || defined(_M_X64)
+#define RX_SIMD
+#ifdef _MSC_VER
+#include <intrin.h>
+#else // _MSC_VER
+#include <x86intrin.h>
+#endif
+#endif*/
+
 #define BALANCE_DEFAULT      20 // Balance/Color Balance default setting
 #define BALANCE_MIN           1 // Balance/Color Balance minimum setting
 #define BALANCE_MAX          39 // Balance/Color Balance maximum setting
@@ -40,6 +50,7 @@
 // Color reduction flags:
 //   RX_FLAG_PRESERVE_ALPHA      During color reduction, the alpha channel is not modified.
 //   RX_FLAG_NO_PRESERVE_ALPHA   During color reduction, the alpha channel is modified.
+//   RX_FLAG_NO_WRITEBACK        Color reduction will not write back the RGB pixel data.
 // -----------------------------------------------------------------------------------------------
 typedef enum RxFlag_ {
 	RX_FLAG_SORT_ALL            = (0x00<< 0), // sort the entire output palette
@@ -56,6 +67,7 @@ typedef enum RxFlag_ {
 
 	RX_FLAG_PRESERVE_ALPHA      = (0x00<< 4), // leaves the alpha channel unaffected in a color reduction operation.
 	RX_FLAG_NO_PRESERVE_ALPHA   = (0x01<< 4), // modifies the alpha channel in a color reduction operation.
+	RX_FLAG_NO_WRITEBACK        = (0x01<< 5), // suppresses writeback of RGB pixel data in color reduction
 } RxFlag;
 
 typedef struct RxBalanceSetting_ {
@@ -133,27 +145,6 @@ int RxCreatePaletteEx(
 	int            colorBalance,   // the color balance setting
 	int            enhanceColors,  // enhance largely used colors
 	RxFlag         flag            // color reduction flags
-);
-
-// -----------------------------------------------------------------------------------------------
-// Name: RxPaletteFindClosestColorSimple
-//
-// Finds the closest color in a palette to the specified color. If the specified color appears
-// in the color palette, its index is returned. Otherwise, the nearest color in terms of a
-// weighted YUV difference is used to estimate the nearest color.
-//
-// Parameters:
-//   rgb           The color to match.
-//   palette       The color palette to search.
-//   nColors       The size of the color palette to search.
-//
-// Returns:
-//   The index of the nearest color to rgb in the color palette.
-// -----------------------------------------------------------------------------------------------
-int RxPaletteFindClosestColorSimple(
-	COLOR32        rgb,     // the color to match
-	const COLOR32 *palette, // the input color palette
-	unsigned int   nColors  // the input color palette size
 );
 
 // -----------------------------------------------------------------------------------------------
@@ -298,24 +289,6 @@ void RxCreateMultiplePalettesEx(
 	int           *progress          // pointer to current progress
 );
 
-// -----------------------------------------------------------------------------------------------
-// Name: RxConvertRgbToYuv
-//
-// Convert an RGB color to YUV space.
-//
-// Parameters:
-//   r,g,b         The input RGB color, with components from 0-255.
-//   y,u,v         The output YUV color.
-// -----------------------------------------------------------------------------------------------
-void RxConvertRgbToYuv(
-	int  r,  // input color R
-	int  g,  // input color G
-	int  b,  // input color B
-	int *y,  // output color Y
-	int *u,  // output color U
-	int *v   // output color V
-);
-
 
 //----------structures used by palette generator
 
@@ -333,12 +306,24 @@ typedef struct RxRgbColor_ {
 	int a;
 } RxRgbColor;
 
-typedef struct RxYiqColor_ {
-	int y;
-	int i;
-	int q;
-	int a;
+#ifdef RX_SIMD
+typedef union RxYiqColor_ {
+	struct {
+		float y;
+		float i;
+		float q;
+		float a;
+	};
+	__m128 yiq;
 } RxYiqColor;
+#else
+typedef struct RxYiqColor_ {
+	float y;
+	float i;
+	float q;
+	float a;
+} RxYiqColor;
+#endif
 
 //histogram linked list entry as secondary sorting
 typedef struct RxHistEntry_ {
@@ -373,6 +358,7 @@ typedef struct RxSlab_ {
 typedef struct RxHistogram_ {
 	RxSlab allocator;
 	RxHistEntry *entries[0x20000];
+	double totalWeight;
 	int nEntries;
 	int firstSlot;
 } RxHistogram;
@@ -393,10 +379,21 @@ typedef struct RxReduction_ {
 	double iWeight;
 	double qWeight;
 	double aWeight;
-	double yWeight2;
-	double iWeight2;
-	double qWeight2;
-	double aWeight2;
+	union {
+		struct {
+			double yWeight2;
+			double iWeight2;
+			double qWeight2;
+			double aWeight2;
+		};
+#ifdef RX_SIMD
+		struct {
+			__m128d yiWeight2;
+			__m128d qaWeight2;
+			__m128 yiqaWeight2; // YIQA weights packed into singles
+		};
+#endif
+	};
 	int nPaletteColors;
 	int nUsedColors;
 	int enhanceColors;
@@ -449,7 +446,8 @@ COLOR32 RxConvertYiqToRgb(
 // -----------------------------------------------------------------------------------------------
 // Name: RxInit
 //
-// Initialize a RxReduction structure with palette parameters.
+// Initialize a RxReduction structure with palette parameters. Release the resources held by this
+// context using the RxDestroy function.
 //
 // Parameters:
 //   reduction     The color reduction context.
@@ -460,6 +458,28 @@ COLOR32 RxConvertYiqToRgb(
 // -----------------------------------------------------------------------------------------------
 void RxInit(
 	RxReduction *reduction,      // the color reduction context
+	int          balance,        // the balance setting
+	int          colorBalance,   // the color balance setting
+	int          enhanceColors,  // assign more weight to frequently occurring colors
+	unsigned int nColors         // the number of colors to set the reduction up to calculate
+);
+
+// -----------------------------------------------------------------------------------------------
+// Name: RxNew
+//
+// Allocates and initializes a RxReduction structure with palette parameters. Free the returned
+// context using the RxFree function.
+//
+// Parameters:
+//   balance       The balance setting.
+//   colorBalance  The color balance setting.
+//   enhanceColors Enhance largely used colors.
+//   nColors       The number of colors to generate in a palette.
+//
+// Returns:
+//   A pointer to the allocated color reduction context, if successful, or NULL on failure.
+// -----------------------------------------------------------------------------------------------
+RxReduction *RxNew(
 	int          balance,        // the balance setting
 	int          colorBalance,   // the color balance setting
 	int          enhanceColors,  // assign more weight to frequently occurring colors
@@ -538,6 +558,29 @@ void RxHistFinalize(
 // -----------------------------------------------------------------------------------------------
 void RxComputePalette(
 	RxReduction *reduction  // the color reduction context
+);
+
+// -----------------------------------------------------------------------------------------------
+// Name: RxComputeColorDifference
+//
+// Compute a color palette using the histogram held by the color reduction context. Before calling
+// this function, the histogram must be finalized by a call to RxHistFinalize. 
+//
+// Parameters:
+//   reduction     The color reduction context.
+//   yiq1          The first color.
+//   yiq2          The second color.
+//
+// Returns:
+//   A measure of squared difference between the two colors. Difference measures from different
+//   reduction contexts should not be compared directly. When two colors are identical, this
+//   function will return 0.0. A pair of colors with a greater distance should appear more
+//   dissimilar than a pair with a lower distance.
+// -----------------------------------------------------------------------------------------------
+double RxComputeColorDifference(
+	RxReduction *reduction,
+	const RxYiqColor *yiq1,
+	const RxYiqColor *yiq2
 );
 
 // -----------------------------------------------------------------------------------------------
@@ -674,5 +717,18 @@ void RxReduceImageWithContext(
 //   reduction     The color reduction context to be freed
 // -----------------------------------------------------------------------------------------------
 void RxDestroy(
+	RxReduction *reduction // the color reduction context
+);
+
+// -----------------------------------------------------------------------------------------------
+// Name: RxFree
+//
+// Frees all resources held by a color reduction context. Only call this function on the return
+// value of RxNew.
+//
+// Parameters:
+//   reduction     The color reduction context to be freed
+// -----------------------------------------------------------------------------------------------
+void RxFree(
 	RxReduction *reduction // the color reduction context
 );

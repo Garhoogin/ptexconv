@@ -28,7 +28,7 @@ static float BgiTileDifferenceFlip(RxReduction *reduction, BgTile *t1, BgTile *t
 
 			RxYiqColor *yiq1 = &t1->pxYiq[x + y * 8];
 			RxYiqColor *yiq2 = &t2->pxYiq[x2 + y2 * 8];
-			double dy = reduction->lumaTable[yiq1->y] - reduction->lumaTable[yiq2->y];
+			double dy = reduction->lumaTable[(int) (yiq1->y + 0.5)] - reduction->lumaTable[(int) (yiq2->y + 0.5)];
 			double di = yiq1->i - yiq2->i;
 			double dq = yiq1->q - yiq2->q;
 			double da = yiq1->a - yiq2->a;
@@ -81,21 +81,21 @@ static float BgiTileDifference(RxReduction *reduction, BgTile *t1, BgTile *t2, i
 	return err;
 }
 
-static void BgiAddTileToTotal(RxReduction *reduction, int *pxBlock, BgTile *tile) {
+static void BgiAddTileToTotal(RxReduction *reduction, RxYiqColor *pxBlock, BgTile *tile) {
 	for (int y = 0; y < 8; y++) {
 		for (int x = 0; x < 8; x++) {
 			COLOR32 col = tile->px[x + y * 8];
 
 			int x2 = (tile->flipMode & TILE_FLIPX) ? (7 - x) : x;
 			int y2 = (tile->flipMode & TILE_FLIPY) ? (7 - y) : y;
-			int *dest = pxBlock + 4 * (x2 + y2 * 8);
+			RxYiqColor *dest = &pxBlock[x2 + y2 * 8];
 
 			RxYiqColor yiq;
 			RxConvertRgbToYiq(col, &yiq);
-			dest[0] += (int) (16.0 * reduction->lumaTable[yiq.y] + 0.5f);
-			dest[1] += yiq.i;
-			dest[2] += yiq.q;
-			dest[3] += yiq.a;
+			dest->y += (float) reduction->lumaTable[(int) (yiq.y + 0.5)];
+			dest->i += yiq.i;
+			dest->q += yiq.q;
+			dest->a += yiq.a;
 		}
 	}
 }
@@ -321,40 +321,26 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, in
 	for (int i = 0; i < nTiles; i++) {
 		if (tiles[i].masterTile != i) continue;
 		if (tiles[i].nRepresents <= 1) continue; //no averaging required for just one tile
-		BgTile *tile = tiles + i;
+		BgTile *tile = &tiles[i];
 
 		//average all tiles that use this master tile.
-		int pxBlock[64 * 4] = { 0 };
+		RxYiqColor pxBlock[64] = { 0 };
 		int nRep = tile->nRepresents;
 		for (int j = 0; j < nTiles; j++) {
-			if (tiles[j].masterTile != i) continue;
-			BgTile *tile2 = tiles + j;
-			BgiAddTileToTotal(reduction, pxBlock, tile2);
+			BgTile *tile2 = &tiles[j];
+			if (tile2->masterTile == i) BgiAddTileToTotal(reduction, pxBlock, tile2);
 		}
 
 		//divide by count, convert to 32-bit RGB
-		for (int j = 0; j < 64 * 4; j++) {
-			int ch = pxBlock[j];
-
-			//proper round to nearest
-			if (ch >= 0) {
-				ch = (ch * 2 + nRep) / (nRep * 2);
-			} else {
-				ch = (ch * 2 - nRep) / (nRep * 2);
-			}
-			pxBlock[j] = ch;
+		for (int j = 0; j < 64; j++) {
+			pxBlock[j].y /= nRep;
+			pxBlock[j].i /= nRep;
+			pxBlock[j].q /= nRep;
+			pxBlock[j].a /= nRep;
 		}
 		for (int j = 0; j < 64; j++) {
-			int cy = pxBlock[j * 4 + 0]; //times 16
-			int ci = pxBlock[j * 4 + 1];
-			int cq = pxBlock[j * 4 + 2];
-			int ca = pxBlock[j * 4 + 3];
-
-			double dcy = ((double) cy) / 16.0;
-			cy = (int) (pow(dcy * 0.00195695, 1.0 / reduction->gamma) * 511.0);
-
-			RxYiqColor yiq = { cy, ci, cq, ca };
-			tile->px[j] = RxConvertYiqToRgb(&yiq);
+			pxBlock[j].y = (float) (pow(pxBlock[j].y * 0.00195695, 1.0 / reduction->gamma) * 511.0);
+			tile->px[j] = RxConvertYiqToRgb(&pxBlock[j]);
 		}
 
 		//try to determine the most optimal palette. Child tiles can be different palettes.
@@ -372,18 +358,12 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, in
 
 		//now, match colors to indices.
 		COLOR32 *pal = palette + (bestPalette << nBits);
-		RxReduceImageWithContext(reduction, tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset,
-			paletteSize - !paletteOffset, RX_FLAG_ALPHA_MODE_NONE | RX_FLAG_PRESERVE_ALPHA, 0.0f);
+		int idxs[64];
+		RxReduceImageWithContext(reduction, tile->px, idxs, 8, 8, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset,
+			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA, 0.0f);
 		for (int j = 0; j < 64; j++) {
-			COLOR32 col = tile->px[j];
-			int index = 0;
-			if (((col >> 24) & 0xFF) > 127) {
-				index = RxPaletteFindClosestColorSimple(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset)
-					+ !paletteOffset + paletteOffset;
-			}
-
-			tile->indices[j] = index;
-			tile->px[j] = index ? (pal[index] | 0xFF000000) : 0;
+			tile->indices[j] = idxs[j] == 0 ? 0 : (idxs[j] + paletteOffset - !!paletteOffset);
+			tile->px[j] = tile->indices[j] ? (pal[tile->indices[j]] | 0xFF000000) : 0;
 		}
 		tile->palette = bestPalette;
 
@@ -404,12 +384,11 @@ int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, in
 }
 
 void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int paletteSize, int nPalettes, int paletteBase, int paletteOffset, int dither, float diffuse, int balance, int colorBalance, int enhanceColors) {
-	RxReduction *reduction = (RxReduction *) calloc(1, sizeof(RxReduction));
-	RxInit(reduction, balance, colorBalance, enhanceColors, paletteSize);
+	RxReduction *reduction = RxNew(balance, colorBalance, enhanceColors, paletteSize);
 
 	if (!dither) diffuse = 0.0f;
 	for (int i = 0; i < nTiles; i++) {
-		BgTile *tile = tiles + i;
+		BgTile *tile = &tiles[i];
 
 		//create histogram for tile
 		RxHistClear(reduction);
@@ -432,17 +411,13 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 		COLOR32 *pal = palette + (bestPalette << nBits);
 
 		//do optional dithering (also matches colors at the same time)
-		RxReduceImageWithContext(reduction, tile->px, NULL, 8, 8, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset, RX_FLAG_ALPHA_MODE_NONE | RX_FLAG_PRESERVE_ALPHA, diffuse);
+		int idxs[64];
+		RxReduceImageWithContext(reduction, tile->px, idxs, 8, 8, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset,
+			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA, diffuse);
 		for (int j = 0; j < 64; j++) {
 			COLOR32 col = tile->px[j];
-			int index = 0;
-			if (((col >> 24) & 0xFF) > 127) {
-				index = RxPaletteFindClosestColorSimple(col, pal + paletteOffset + !paletteOffset, paletteSize - !paletteOffset)
-					+ !paletteOffset + paletteOffset;
-			}
-
-			tile->indices[j] = index;
-			tile->px[j] = index ? (pal[index] | 0xFF000000) : 0;
+			tile->indices[j] = idxs[j] == 0 ? 0 : (idxs[j] + paletteOffset - !!paletteOffset);
+			tile->px[j] = tile->indices[j] ? (pal[tile->indices[j]] | 0xFF000000) : 0;
 
 			//YIQ color
 			RxConvertRgbToYiq(col, &tile->pxYiq[j]);
@@ -452,8 +427,7 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 		tile->nRepresents = 1;
 		tile->palette = bestPalette;
 	}
-	RxDestroy(reduction);
-	free(reduction);
+	RxFree(reduction);
 }
 
 void BgGenerate(COLOR *pOutPalette, unsigned char **pOutChars, unsigned short **pOutScreen, 
@@ -672,7 +646,7 @@ double BgiPaletteCharError(RxReduction *reduction, COLOR32 *block, RxYiqColor *p
 		}
 
 		//diff
-		double dy = reduction->yWeight * (reduction->lumaTable[yiq.y] - reduction->lumaTable[matchedYiq->y]);
+		double dy = reduction->yWeight * (reduction->lumaTable[(int) (yiq.y + 0.5)] - reduction->lumaTable[(int) (matchedYiq->y + 0.5)]);
 		double di = reduction->iWeight * (yiq.i - matchedYiq->i);
 		double dq = reduction->qWeight * (yiq.q - matchedYiq->q);
 		double da = 40 * (yiq.a - matchedA);
@@ -739,7 +713,7 @@ void BgAssemble(COLOR32 *imgBits, int width, int height, int nBits, COLOR *pals,
 	RxReduction *reduction = (RxReduction *) calloc(1, sizeof(RxReduction));
 	RxInit(reduction, balance, colorBalance, enhanceColors, (1 << nBits) - 1);
 	for (int i = 0; i < (nPalettes << nBits); i++) {
-		RxConvertRgbToYiq(ColorConvertFromDS(pals[i]), &paletteYiq[i]);
+		RxConvertRgbToYiq(ColorConvertFromDS(pals[i]) | 0xFF000000, &paletteYiq[i]);
 	}
 
 	//split image into 8x8 tiles.

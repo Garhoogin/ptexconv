@@ -2,51 +2,6 @@
 #include <math.h>
 #include <limits.h>
 
-int RxColorLightnessComparator(const void *d1, const void *d2) {
-	COLOR32 c1 = *(COLOR32 *) d1;
-	COLOR32 c2 = *(COLOR32 *) d2;
-	if (c1 == c2) return 0;
-	
-	//by properties of linear transformations, this is valid
-	int dr = ((c1 >>  0) & 0xFF) - ((c2 >>  0) & 0xFF);
-	int dg = ((c1 >>  8) & 0xFF) - ((c2 >>  8) & 0xFF);
-	int db = ((c1 >> 16) & 0xFF) - ((c2 >> 16) & 0xFF);
-	int dy = dr * 299 + dg * 587 + db * 114;
-
-	return dy;
-}
-
-int RxPaletteFindClosestColorSimple(COLOR32 rgb, const COLOR32 *palette, unsigned int paletteSize) {
-	unsigned int smallestDistance = UINT_MAX;
-	int index = 0;
-
-	//test exact matches
-	for (unsigned int i = 0; i < paletteSize; i++) {
-		if ((rgb & 0xFFFFFF) == (palette[i] & 0xFFFFFF)) {
-			return i;
-		}
-	}
-
-	//else
-	for (unsigned int i = 0; i < paletteSize; i++) {
-		COLOR32 entry = palette[i];
-		int dr = ((entry >>  0) & 0xFF) - ((rgb >>  0) & 0xFF);
-		int dg = ((entry >>  8) & 0xFF) - ((rgb >>  8) & 0xFF);
-		int db = ((entry >> 16) & 0xFF) - ((rgb >> 16) & 0xFF);
-
-		int ey, eu, ev;
-		RxConvertRgbToYuv(dr, dg, db, &ey, &eu, &ev);
-
-		unsigned int dst = 4 * ey * ey + eu * eu + ev * ev;
-		if (dst < smallestDistance) {
-			index = i;
-			smallestDistance = dst;
-		}
-	}
-
-	return index;
-}
-
 static int m(int a) {
 	return a < 0? 0: (a > 255? 255: a);
 }
@@ -77,10 +32,4 @@ void doDiffuse(int i, int width, int height, unsigned int * pixels, int errorRed
 			pixels[i + width + 1] = right;
 		}
 	}
-}
-
-void RxConvertRgbToYuv(int r, int g, int b, int *y, int *u, int *v) {
-	*y = (int) ( 0.2990 * r + 0.5870 * g + 0.1140 * b);
-	*u = (int) (-0.1684 * r - 0.3316 * g + 0.5000 * b);
-	*v = (int) ( 0.5000 * r - 0.4187 * g - 0.0813 * b);
 }
