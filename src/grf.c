@@ -218,10 +218,10 @@ int GrfWriteTexImage(
 }
 
 int GrfFinalize(FILE *fp) {
-	uint32_t pos = ftell(fp);
+	uint32_t pos = ftell(fp) - 8;
 	fseek(fp, offsetof(GrfFileHeader, fileSize), SEEK_SET);
 	fwrite(&pos, 1, sizeof(pos), fp);
-	fseek(fp, 0, SEEK_END);
 	
+	fseek(fp, 0, SEEK_END);
 	return 1;
 }
