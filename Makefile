@@ -53,6 +53,8 @@ SOURCES_CPP	:= $(shell find -L $(SOURCEDIRS) -name "*.cpp")
 # Compiler and linker flags
 # -------------------------
 
+DEFINES	:= -DNDEBUG
+
 WARNFLAGS_C	:= -Wall -Wextra -Wpedantic \
 		-Wno-maybe-uninitialized -Wno-alloc-size-larger-than -Wno-pointer-sign \
 		-Wno-unused-variable -Wno-unused-result -Wno-unused-parameter \
