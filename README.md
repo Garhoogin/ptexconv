@@ -48,6 +48,7 @@ This is the command line version of the background and texture converson functio
        -tt     Trim the texture in the T axis if its height is not a power of 2
        -t0x    Color 0 is transparent (defuault: inferred)
        -t0o    Color 0 is opaque      (default: inferred)
+       -da     Apply dithering in the alpha  channel (a3i5, a5i3)
        -fp <f> Specify fixed palette file
        -fpo    Outputs the fixed palette among other output files when used
 
@@ -93,6 +94,19 @@ Lastly, to do BG color reduction but output as a standard BMP file, use the `-od
 
 ## Texture Conversion Options
 Texture conversion has a couple switches of its own. Use `-f` followed by a format name (or number) to select a texture format to use. Use the `-fp` option followed by a path to a (raw) palette file to instruct the program to use this palette file when generating texture data. Lastly, the `-ot` option tells ptexconv to output a file as an NNS TGA file (for use with NNS plugins).
+
+The options for texture format are summarized:
+| Format     | Bit Depth | Max Palette Colors | Transparency |
+| ---------- | --------- | ------------------ | ------------ |
+| palette4   | 2bpp      | 4                  | 1 color      |
+| palette16  | 4bpp      | 16                 | 1 color      |
+| palette256 | 8bpp      | 256                | 1 color      |
+| a3i5       | 8bpp      | 32                 | 3-bit        |
+| a5i3       | 8bpp      | 8                  | 5-bit        |
+| tex4x4     | 2+1bpp    | 32768              | 1 color      |
+| direct     | 16bpp     | --                 | 1-bit        |
+
+Texture formats a3i5 and a5i3 have a full alpha channel per pixel. In these formats, you may choose to enable dithering of the alpha channel by enabling the `-da` switch. Without this option, the alpha value is rounded to nearest and not dithered. To use alpha dithering, the `-d` option must also be specified with a dithering level. This dithering level is then used for both the color and alpha channels.
 
 When using a fixed palette, the palette file is read (and assumed not to be compressed) and used for the color reduction process without being modified. By default, a palette file is not output when outputting raw binary data with a fixed palette. If output of the palette file is required, you may additionally use the `-fpo` option.
 
