@@ -125,6 +125,7 @@ static const char *g_helpString = ""
 	"   -tt     Trim the texture in the T axis if its height is not a power of 2\n"
 	"   -t0x    Color 0 is transparent     (default: inferred)\n"
 	"   -t0o    Color 0 is not transparent (default: inferred)\n"
+	"   -da     Apply dithering in the alpha  channel (a3i5, a5i3)\n"
 	"   -fp <f> Specify fixed palette file\n"
 	"   -fpo    Outputs the fixed palette among other output files when used\n"
 	"\n"
@@ -765,6 +766,7 @@ int _tmain(int argc, TCHAR **argv) {
 	int trimT = 0;                      // trim texture in the T axis if not a power of 2 in height
 	int outFixedPalette = 0;            // output fixed palette among other output files
 	int c0xp = -1;                      // is color 0 transparent reserved?
+	int ditherAlpha = 0;                // dither the alpha channel?
 	
 	//Compression settings
 	CxCompressionPolicy compressionPolicy = 0;
@@ -916,6 +918,9 @@ int _tmain(int argc, TCHAR **argv) {
 		} else if (_tcscmp(arg, _T("-t0x")) == 0) {
 			//color 0 is transparent
 			c0xp = 1;
+		} else if (_tcscmp(arg, _T("-da")) == 0) {
+			//dither alpha
+			ditherAlpha = 1;
 		}
 		
 		//compression switch
@@ -1431,7 +1436,7 @@ int _tmain(int argc, TCHAR **argv) {
 		params.dest = &texture;
 		params.diffuseAmount = (float) diffuse / 100.0f;
 		params.dither = !!diffuse;
-		params.ditherAlpha = (format == CT_A3I5 || format == CT_A5I3) && params.dither;
+		params.ditherAlpha = params.dither && ditherAlpha && (format == CT_A3I5 || format == CT_A5I3);
 		params.useFixedPalette = fixedPalette != NULL;
 		params.fixedPalette = NULL;
 		params.fmt = format;
