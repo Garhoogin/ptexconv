@@ -74,6 +74,7 @@ int GrfWriteHdr(
 	int             chrHeight, 
 	int             metaWidth,
 	int             metaHeight,
+	GrfGfxFlags     flags,
 	int             gfxWidth,
 	int             gfxHeight
 ) {
@@ -92,6 +93,9 @@ int GrfWriteHdr(
 	fileHeader.chrHeight = chrHeight;
 	fileHeader.metaWidth = metaWidth;
 	fileHeader.metaHeight = metaHeight;
+#if (GRF_VERSION >= 2)
+	fileHeader.flags = (uint16_t) flags;
+#endif
 	fileHeader.gfxWidth = gfxWidth;
 	fileHeader.gfxHeight = gfxHeight;
 	
@@ -110,7 +114,7 @@ int GrfBgWriteHdr(
 	int             paletteSize
 ) {
 	//write BG header for GRF
-	return GrfWriteHdr(fp, depth, scrType, 0, paletteSize, 8, 8, 0, 0, width, height);
+	return GrfWriteHdr(fp, depth, scrType, 0, paletteSize, 8, 8, 0, 0, GRF_GFX_FLAG_TYPE_BG, width, height);
 }
 
 int GrfTexWriteHdr(
@@ -118,7 +122,8 @@ int GrfTexWriteHdr(
 	int    fmt,
 	int    width,
 	int    height,
-	int    paletteSize
+	int    paletteSize,
+	int    c0xp
 ) {
 	//convert texture format into what GRF expects
 	int gfxAttr = 0;
@@ -126,15 +131,19 @@ int GrfTexWriteHdr(
 		case CT_4COLOR:   gfxAttr = GRF_GFX_ATTR_2BIT;   break;
 		case CT_16COLOR:  gfxAttr = GRF_GFX_ATTR_4BIT;   break;
 		case CT_256COLOR: gfxAttr = GRF_GFX_ATTR_8BIT;   break;
-		case CT_A3I5:     gfxAttr = GRF_GFX_ATTR_A3I5;   break;
-		case CT_A5I3:     gfxAttr = GRF_GFX_ATTR_A5I3;   break;
-		case CT_DIRECT:   gfxAttr = GRF_GFX_ATTR_16BIT;  break;
-		case CT_4x4:      gfxAttr = GRF_GFX_ATTR_TEX4x4; break;
+		case CT_A3I5:     gfxAttr = GRF_GFX_ATTR_A3I5;   c0xp = 0; break;
+		case CT_A5I3:     gfxAttr = GRF_GFX_ATTR_A5I3;   c0xp = 0; break;
+		case CT_DIRECT:   gfxAttr = GRF_GFX_ATTR_16BIT;  c0xp = 0; break;
+		case CT_4x4:      gfxAttr = GRF_GFX_ATTR_TEX4x4; c0xp = 0; break;
 	}
+	
+	GrfGfxFlags flags = 0;
+	flags |= GRF_GFX_FLAG_TYPE_TEX;
+	if (c0xp) flags |= GRF_GFX_FLAG_C0XP;
 	
 	//write texture header for GRF
 	int tileSize = (fmt == CT_4x4) ? 4 : 1;
-	return GrfWriteHdr(fp, gfxAttr, GRF_SCREEN_TYPE_NONE, 0, paletteSize, tileSize, tileSize, 0, 0, width, height);
+	return GrfWriteHdr(fp, gfxAttr, GRF_SCREEN_TYPE_NONE, 0, paletteSize, tileSize, tileSize, 0, 0, flags, width, height);
 }
 
 int GrfWritePltt(FILE *fp, const void *data, unsigned int nColors, CxCompressionPolicy compress) {

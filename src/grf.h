@@ -36,6 +36,16 @@ typedef enum GrfBgScreenType_ {
 	GRF_SCREEN_TYPE_AFFINE_EXT            // Affine Extended (256x16)
 } GrfBgScreenType;
 
+typedef enum GrfGfxFlags_ {
+	GRF_GFX_FLAG_C0XP      = 0x0001,      // For BG: color 0 is transparent
+	
+	GRF_GFX_FLAG_TYPE_MASK = 0xC000,      // Mask for graphics type
+	GRF_GFX_FLAG_TYPE_TEX  = 0x0000,      // Graphics type is texture
+	GRF_GFX_FLAG_TYPE_BG   = 0x4000,      // Graphics type is BG
+	GRF_GFX_FLAG_TYPE_OBJ  = 0x8000,      // Graphics type is OBJ
+	GRF_GFX_FLAG_TYPE_RSV  = 0xC000       // Reserved for future expansion
+} GrfGfxFlags;
+
 typedef struct GrfFileHeader_ {
 	uint32_t signature;                   // RIFF file signature
 	uint32_t fileSize;                    // RIFF file size
@@ -61,6 +71,9 @@ typedef struct GrfHeader_ {
 	uint8_t chrHeight;                    // height of character unit
 	uint8_t metaWidth;                    // width of meta unit
 	uint8_t metaHeight;                   // height of meta unit
+#if (GRF_VERSION >= 2)
+	uint16_t flags;                       // graphics flags
+#endif
 	uint32_t gfxWidth;                    // width of graphics
 	uint32_t gfxHeight;                   // height of graphics
 } GrfHeader;
@@ -96,6 +109,7 @@ int GrfWriteHdr(
 	int                   chrHeight,      // height of tile unit
 	int                   metaWidth,      // width of meta tile unit
 	int                   metaHeight,     // height of meta tile unit
+	GrfGfxFlags           flags,          // graphics flags
 	int                   gfxWidth,       // width of graphics
 	int                   gfxHeight       // height of graphics
 );
@@ -114,7 +128,8 @@ int GrfTexWriteHdr(
 	int                   fmt,            // texture format
 	int                   width,          // texture width in pixels
 	int                   height,         // texture height in pixels
-	int                   paletteSize     // size of texture palette in colors
+	int                   paletteSize,    // size of texture palette in colors
+	int                   c0xp            // color 0 is transparent
 );
 
 int GrfWritePltt(

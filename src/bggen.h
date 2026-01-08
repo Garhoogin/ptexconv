@@ -3,13 +3,24 @@
 #include "color.h"
 #include "palette.h"
 
-#define SCREENFORMAT_TEXT 0
-#define SCREENFORMAT_AFFINE 1
+typedef enum BggenColor0Mode_ {
+	BGGEN_COLOR0_FIXED,     // Color 0 is fixed
+	BGGEN_COLOR0_USE        // Color 0 is used for reduction (not supporting transparency)
+} BggenColor0Mode;
+
+#define SCREENFORMAT_TEXT      0
+#define SCREENFORMAT_AFFINE    1
 #define SCREENFORMAT_AFFINEEXT 2
 
-#define SCREENCOLORMODE_16x16 0
-#define SCREENCOLORMODE_256x1 1
+#define SCREENCOLORMODE_16x16  0
+#define SCREENCOLORMODE_256x1  1
 #define SCREENCOLORMODE_256x16 2
+
+#define BGGEN_BGTYPE_TEXT_16x16       0
+#define BGGEN_BGTYPE_TEXT_256x1       1
+#define BGGEN_BGTYPE_AFFINE_256x1     2
+#define BGGEN_BGTYPE_AFFINEEXT_256x16 3
+#define BGGEN_BGTYPE_BITMAP           4
 
 #define TILE_FLIPX 1
 #define TILE_FLIPY 2
@@ -21,13 +32,17 @@
 // BgPerformCharacterCompression.
 //
 typedef struct BgTile_ {
-	COLOR32 px[64];               //RGBA colors: redundant, speed
-	RxYiqColor pxYiq[64];         //YIQA colors
-	unsigned char indices[64];    //color indices per pixel
-	int masterTile;               //index of master tile for this tile 
-	int nRepresents;              //number of tiles this tile represents
-	int flipMode;                 //flip orientation of this tile
-	int palette;                  //palette index of this tile
+	COLOR32 px[64];               // RGBA colors: redundant, speed
+	RxYiqColor pxYiq[64];         // YIQA colors
+#ifdef BGGEN_USE_DCT
+	BgDctBlock dct;               // DCT coefficients
+#endif
+	unsigned char indices[64];    // color indices per pixel
+	unsigned int masterTile;      // index of master tile for this tile 
+	int nRepresents;              // number of tiles this tile represents
+	int flipMode;                 // flip orientation of this tile
+	int palette;                  // palette index of this tile
+	int charNo;                   // this character's output index, if this is a master tile.
 } BgTile;
 
 /****************************************************************************\
@@ -41,31 +56,31 @@ typedef struct BgTile_ {
 *
 \****************************************************************************/
 typedef struct BgPaletteRegion_ {
-	int base;                          //Index of first palette to use
-	int count;                         //Number of palettes to use
-	int length;                        //Number of colors per palette
-	int offset;                        //Index of first color to use in each palette
+	int base;                          // Index of first palette to use
+	int count;                         // Number of palettes to use
+	int length;                        // Number of colors per palette
+	int offset;                        // Index of first color to use in each palette
 } BgPaletteRegion;
 
 typedef struct BgCharacterSetting_ {
-	int base;                         //character VRAM base offset
-	int compress;                     //enables character compression
-	int nMax;                         //max characters if compression enabled
-	int alignment;                    //rounds up character count to a multiple of this
-	int tileFlip;                     //use tile flipping
+	int base;                         // character VRAM base offset
+	int compress;                     // enables character compression
+	int nMax;                         // max characters if compression enabled
+	int alignment;                    // rounds up character count to a multiple of this
 } BgCharacterSetting;
 
 typedef struct BgGenerateParameters_ {
 	//global
-	RxBalanceSetting balance;         //Balance settings to use during conversion
+	int bgType;                       // Type of BG (e.g. text, affine...)
+	RxBalanceSetting balance;         // Balance settings to use during conversion
 
 	//palette
-	int compressPalette;              //Use palette compression
-	BgPaletteRegion paletteRegion;    //Palette region to use for conversion
+	int compressPalette;              // Use palette compression
+	BggenColor0Mode color0Mode;       // Specifies how color 0 is chosen
+	BgPaletteRegion paletteRegion;    // Palette region to use for conversion
 
 	//character
-	int nBits;                       //Bit depth of graphics data output
-	RxDitherSetting dither;          //Dither configuration
+	RxDitherSetting dither;          // Dither configuration
 	BgCharacterSetting characterSetting;
 } BgGenerateParameters;
 
@@ -83,8 +98,21 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 // combined, the bit depth and palette settings are used to finalize the
 // result in the tile array. progress must not be NULL, and ranges from 0-1000.
 //
-int BgPerformCharacterCompression(BgTile *tiles, int nTiles, int useTileFlip, int nBits, int nMaxChars, COLOR32 *palette, int paletteSize, int nPalettes,
-	int paletteBase, int paletteOffset, int balance, int colorBalance, int *progress);
+int BgPerformCharacterCompression(
+	BgTile        *tiles,
+	unsigned int   nTiles,
+	unsigned int   nBits,
+	unsigned int   nMaxChars,
+	int            allowFlip,
+	const COLOR32 *palette,
+	unsigned int   paletteSize,
+	unsigned int   nPalettes,
+	unsigned int   paletteBase,
+	unsigned int   paletteOffset,
+	int            balance,
+	int            colorBalance,
+	volatile int  *progress
+);
 
 /****************************************************************************\
 *

@@ -74,7 +74,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.5.2.3"
+#define VERSION "1.5.3.0"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -98,13 +98,16 @@ static const char *g_helpString = ""
 	"   -h      Display help text\n"
 	"\n"
 	"BG Options:\n"
-	"   -b  <n> Specify output bit depth {4, 8}\n"
-	"   -ba     Output BG data as affine\n"
-	"   -bA     Output BG data as affine extended\n"
+	"   -bt4    Output BG data as text            (4bpp)\n"
+	"   -bt8    Output BG data as text            (8bpp)\n"
+	"   -ba     Output BG data as affine          (8bpp)\n"
+	"   -bA     Output BG data as affine extended (8bpp, default)\n"
+	"   -bB     Output BG data as bitmap (no BG screen output)\n"
 	"   -p  <n> Use n palettes in output\n"
 	"   -po <n> Use per palette offset n\n"
 	"   -pc     Use compressed palette\n"
 	"   -pb <n> Use palette base index n\n"
+	"   -p0o    Use color 0 as an opaque color slot\n"
 	"   -cb <n> Use character base index n\n"
 	"   -cc <n> Compress characters to a maximum of n (default is 1024)\n"
 	"   -cn     No character compression\n"
@@ -269,6 +272,18 @@ const char *PtcGetVersionString(void) {
 	return VERSION;
 }
 
+static void PtcWriteNnsTgaSection(FILE *fp, const char *section, const void *data, unsigned int length) {
+	if (length == (unsigned int) -1) length = strlen(data);
+	
+	//section header
+	unsigned char header[0xC];
+	memcpy(header, section, 8);
+	*(uint32_t *) (header + 0x8) = length + 0xC;
+	
+	fwrite(header, sizeof(header), 1, fp);
+	if (length > 0) fwrite(data, length, 1, fp);
+}
+
 void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	FILE *fp = _tfopen(name, _T("wb"));
 
@@ -287,61 +302,37 @@ void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	fwrite(pixels, width * texels->height * 4, 1, fp);
 
 	const char *fstr = TxNameFromTexFormat(FORMAT(texels->texImageParam));
-	fwrite("nns_frmt", 8, 1, fp);
-	uint32_t flen = strlen(fstr) + 0xC;
-	fwrite(&flen, 4, 1, fp);
-	fwrite(fstr, 1, flen - 0xC, fp);
+	PtcWriteNnsTgaSection(fp, "nns_frmt", fstr, strlen(fstr));
 
 	//texels
-	fwrite("nns_txel", 8, 1, fp);
-	uint32_t txelLength = TxGetTexelSize(width, height, texels->texImageParam) + 0xC;
-	fwrite(&txelLength, 4, 1, fp);
-	fwrite(texels->texel, txelLength - 0xC, 1, fp);
+	uint32_t txelLength = TxGetTexelSize(width, height, texels->texImageParam);
+	PtcWriteNnsTgaSection(fp, "nns_txel", texels->texel, txelLength);
 
 	//write 4x4 if applicable
 	if (FORMAT(texels->texImageParam) == CT_4x4) {
-		fwrite("nns_pidx", 8, 1, fp);
-		uint32_t pidxLength = (txelLength - 0xC) / 2 + 0xC;
-		fwrite(&pidxLength, 4, 1, fp);
-		fwrite(texels->cmp, pidxLength - 0xC, 1, fp);
+		PtcWriteNnsTgaSection(fp, "nns_pidx", texels->cmp, txelLength / 2);
 	}
 
 	//palette (if applicable)
 	if (FORMAT(texels->texImageParam) != CT_DIRECT) {
-		fwrite("nns_pnam", 8, 1, fp);
-		uint32_t pnamLength = strlen(palette->name) + 0xC;
-		fwrite(&pnamLength, 4, 1, fp);
-		fwrite(palette->name, 1, pnamLength - 0xC, fp);
-
+		PtcWriteNnsTgaSection(fp, "nns_pnam", palette->name, (unsigned int) -1);
+		
 		int nColors = palette->nColors;
 		if (FORMAT(texels->texImageParam) == CT_4COLOR && nColors > 4) nColors = 4;
-		fwrite("nns_pcol", 8, 1, fp);
-		uint32_t pcolLength = nColors * 2 + 0xC;
-		fwrite(&pcolLength, 4, 1, fp);
-		fwrite(palette->pal, nColors, 2, fp);
+		PtcWriteNnsTgaSection(fp, "nns_pcol", palette->pal, nColors * sizeof(COLOR));
 	}
-
-	unsigned char gnam[] = { 'n', 'n', 's', '_', 'g', 'n', 'a', 'm', 20, 0, 0, 0, 'p', 't', 'e', 'x', 'c', 'o', 'n', 'v' };
-	fwrite(gnam, sizeof(gnam), 1, fp);
-
-	const char *version = PtcGetVersionString();
-	unsigned char gver[] = { 'n', 'n', 's', '_', 'g', 'v', 'e', 'r', 0, 0, 0, 0 };
-	*(uint32_t *) (gver + 8) = strlen(version) + 0xC;
-	fwrite(gver, sizeof(gver), 1, fp);
-	fwrite(version, strlen(version), 1, fp);
-
-	unsigned char imst[] = { 'n', 'n', 's', '_', 'i', 'm', 's', 't', 0xC, 0, 0, 0 };
-	fwrite(imst, sizeof(imst), 1, fp);
+	
+	PtcWriteNnsTgaSection(fp, "nns_gnam", "ptexconv", (unsigned int) -1);
+	PtcWriteNnsTgaSection(fp, "nns_gver", PtcGetVersionString(), (unsigned int) -1);
+	PtcWriteNnsTgaSection(fp, "nns_imst", NULL, 0);
 
 	//if c0xp
 	if (COL0TRANS(texels->texImageParam)) {
-		unsigned char c0xp[] = { 'n', 'n', 's', '_', 'c', '0', 'x', 'p', 0xC, 0, 0, 0 };
-		fwrite(c0xp, sizeof(c0xp), 1, fp);
+		PtcWriteNnsTgaSection(fp, "nns_c0xp", NULL, 0);
 	}
 
 	//write end
-	unsigned char end[] = { 'n', 'n', 's', '_', 'e', 'n', 'd', 'b', 0xC, 0, 0, 0 };
-	fwrite(end, sizeof(end), 1, fp);
+	PtcWriteNnsTgaSection(fp, "nns_endb", NULL, 0);
 
 	fclose(fp);
 	free(pixels);
@@ -612,49 +603,100 @@ static int PtcEmitTextData(FILE *fp, FILE *fpHeader, const char *prefix, const c
 	return 1;
 }
 
-static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, unsigned int tilesY, int affine, int affineExt, unsigned int *pOutSize) {
-	//affine EXT: return copy of data
-	if (affineExt) {
-		void *cpy = (void *) malloc(tilesX * tilesY * sizeof(uint16_t));
-		memcpy(cpy, src, tilesX * tilesY * sizeof(uint16_t));
-		*pOutSize = tilesX * tilesY * sizeof(uint16_t);
-		return cpy;
-	}
+static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, unsigned int tilesY, int bgType, unsigned int *pOutSize) {
 	
-	//affine: trim upper 8 bits of each halfword
-	if (affine) {
-		uint8_t *cpy = (void *) malloc(tilesX * tilesY);
-		for (unsigned int i = 0; i < tilesX * tilesY; i++) {
-			cpy[i] = src[i] & 0xFF;
-		}
-		*pOutSize = tilesX * tilesY;
-		return cpy;
-	}
-	
-	//else, text BG. Swizzle the data into 256x256 pixel panels.
-	uint16_t *cpy = malloc(tilesX * tilesY * sizeof(uint16_t));
+	switch (bgType) {
+		case BGGEN_BGTYPE_TEXT_16x16:
+		case BGGEN_BGTYPE_TEXT_256x1:
+		{
+			//Text BG: swizzle the data into 256x256 pixel panels.
+			uint16_t *cpy = malloc(tilesX * tilesY * sizeof(uint16_t));
 
-	//split data into panels.
-	unsigned int nPnlX = (tilesX + 31) / 32;
-	unsigned int nPnlY = (tilesY + 31) / 32;
+			//split data into panels.
+			unsigned int nPnlX = (tilesX + 31) / 32;
+			unsigned int nPnlY = (tilesY + 31) / 32;
 
-	unsigned int outpos = 0;
-	for (unsigned int pnlY = 0; pnlY < nPnlY; pnlY++) {
-		for (unsigned int pnlX = 0; pnlX < nPnlX; pnlX++) {
-			for (unsigned int y = 0; y < 32; y++) {
-				for (unsigned int x = 0; x < 32; x++) {
+			unsigned int outpos = 0;
+			for (unsigned int pnlY = 0; pnlY < nPnlY; pnlY++) {
+				for (unsigned int pnlX = 0; pnlX < nPnlX; pnlX++) {
+					for (unsigned int y = 0; y < 32; y++) {
+						for (unsigned int x = 0; x < 32; x++) {
 
-					if ((pnlY * 32 + y) < tilesY && (pnlX * 32 + x) < tilesX) {
-						cpy[outpos++] = src[(pnlX * 32 + x) + (pnlY * 32 + y) * tilesX];
+							if ((pnlY * 32 + y) < tilesY && (pnlX * 32 + x) < tilesX) {
+								cpy[outpos++] = src[(pnlX * 32 + x) + (pnlY * 32 + y) * tilesX];
+							}
+
+						}
 					}
-
 				}
 			}
+			
+			*pOutSize = tilesX * tilesY * sizeof(uint16_t);
+			return cpy;
+		}
+		case BGGEN_BGTYPE_AFFINE_256x1:
+		{
+			//Affine: trim upper 8 bits of each halfword
+			uint8_t *cpy = (void *) malloc(tilesX * tilesY);
+			for (unsigned int i = 0; i < tilesX * tilesY; i++) {
+				cpy[i] = src[i] & 0xFF;
+			}
+			*pOutSize = tilesX * tilesY;
+			return cpy;
+		}
+		case BGGEN_BGTYPE_AFFINEEXT_256x16:
+		{
+			//Affine EXT: return copy of data
+			void *cpy = (void *) malloc(tilesX * tilesY * sizeof(uint16_t));
+			memcpy(cpy, src, tilesX * tilesY * sizeof(uint16_t));
+			*pOutSize = tilesX * tilesY * sizeof(uint16_t);
+			return cpy;
+		}
+		default:
+		case BGGEN_BGTYPE_BITMAP:
+		{
+			//Do nothing here
+			*pOutSize = 0;
+			return NULL;
 		}
 	}
+}
+
+static void *PtcReadFile(const TCHAR *path, int *pSize) {
+	FILE *fp = _tfopen(path, _T("rb"));
+	if (fp == NULL) {
+		*pSize = 0;
+		return NULL;
+	}
 	
-	*pOutSize = tilesX * tilesY * sizeof(uint16_t);
-	return cpy;
+	unsigned int size;
+	fseek(fp, 0, SEEK_END);
+	size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	
+	void *buf = malloc(size + 1);
+	if (buf == NULL) {
+		*pSize = 0;
+	} else {
+		fread(buf, size, 1, fp);
+		*pSize = (int) size;
+	}
+	
+	fclose(fp);
+	return buf;
+}
+
+static void *PtcPadBuffer(void *buf, unsigned int size, unsigned int newSize) {
+	if (newSize < size) newSize = size;
+	
+	void *newbuf = realloc(buf, newSize);
+	if (newbuf != NULL) {
+		memset(((unsigned char *) newbuf) + size, 0, newSize - size);
+	} else {
+		free(buf);
+	}
+	
+	return newbuf;
 }
 
 
@@ -702,7 +744,6 @@ int _tmain(int argc, TCHAR **argv) {
 
 	//BG settings
 	int nMaxChars = 1024;               // maximum character count for BG generator
-	int depth = 8;                      // graphics bit depth for BG generator
 	int nPalettes = 1;                  // number of palettes for BG generator
 	int paletteBase = 0;                // palette base index for BG generator
 	int charBase = 0;                   // character base address for BG generator
@@ -711,9 +752,8 @@ int _tmain(int argc, TCHAR **argv) {
 	int compressPalette = 0;            // only output target palettes/colors?
 	int paletteOffset = 0;              // offset from start of hw palette
 	int screenExclusive = 0;            // output only screen file?
-	int bgAffine = 0;                   // output affine mode BG
-	int bgAffineExt = 0;                // output affine EXT mode BG
-	int bgTileFlip = 1;                 // use tile flip modes in BG
+	int bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
+	int bgColor0Use = 0;                // use color 0 in BG generator
 	const TCHAR *srcPalFile = NULL;     // palette file to read/overwrite
 	const TCHAR *srcChrFile = NULL;     // character file to read/overwrite
 
@@ -772,27 +812,41 @@ int _tmain(int argc, TCHAR **argv) {
 
 		//BG option
 		else if (_tcscmp(arg, _T("-b")) == 0) {
-			i++;
-			if (i < argc) depth = _ttoi(argv[i]);
+			//LEGACY: bit depth select (4bpp -> text 16x16, 8bpp -> affine ext 256x16)
+			if (i < argc) {
+				int nBit = _ttoi(argv[++i]);
+				if (nBit == 4)      bgType = BGGEN_BGTYPE_TEXT_16x16;
+				else if (nBit == 8) bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
+				else PTC_FAIL_IF(1, "Incorrect bit depth specified.\n");
+			}
+		} else if (_tcscmp(arg, _T("-bt4")) == 0) {
+			//BG generate in text 16x16 mode
+			bgType = BGGEN_BGTYPE_TEXT_16x16;
+		} else if (_tcscmp(arg, _T("-bt8")) == 0) {
+			//BG generate in text 256x1 mode
+			bgType = BGGEN_BGTYPE_TEXT_256x1;   // set BG type
+			nPalettes = 1;                      // use only one palette
 		} else if (_tcscmp(arg, _T("-ba")) == 0) {
 			//BG generate in affine mode
-			bgAffine = 1;     // set BG format
-			bgAffineExt = 0;  // ^ 
-			depth = 8;        // must be in 8 bit depth
-			nPalettes = 1;    // use only one palette
-			bgTileFlip = 0;   // disable tile flip
+			bgType = BGGEN_BGTYPE_AFFINE_256x1; // set BG type
+			nPalettes = 1;                      // use only one palette
 			if (nMaxChars > 256) nMaxChars = 256; // adjust default max char count
 		} else if (_tcscmp(arg, _T("-bA")) == 0) {
 			//BG generate in affine EXT mode
-			bgAffine = 0;     // set BG format
-			bgAffineExt = 1;  // ^
-			depth = 8;        // must be in 8 bit depth
+			bgType = BGGEN_BGTYPE_AFFINEEXT_256x16; // set BG type
+		} else if (_tcscmp(arg, _T("-bB")) == 0) {
+			//BG generate in bitmap mode
+			bgType = BGGEN_BGTYPE_BITMAP; // set BG type
+			nPalettes = 1;                // use only one palette
 		} else if (_tcscmp(arg, _T("-p")) == 0) {
 			i++;
 			if (i < argc) nPalettes = _ttoi(argv[i]);
 		} else if (_tcscmp(arg, _T("-pb")) == 0) {
 			i++;
 			if (i < argc) paletteBase = _ttoi(argv[i]);
+		} else if (_tcscmp(arg, _T("-p0o")) == 0) {
+			//Use BG color 0
+			bgColor0Use = 1;
 		} else if (_tcscmp(arg, _T("-cc")) == 0) {
 			i++;
 			if (i < argc) nMaxChars = _ttoi(argv[i]);
@@ -911,19 +965,40 @@ int _tmain(int argc, TCHAR **argv) {
 	
 	if (mode == MODE_BG) {
 		//BG mode paramter checks
-		int bgText = !(bgAffine || bgAffineExt);
+		int maxPltt = 16, maxCharsFmt = 1024, depth = 8;
+		switch (bgType) {
+			case BGGEN_BGTYPE_AFFINEEXT_256x16:
+				depth = 8;
+				maxPltt = 16;
+				maxCharsFmt = 1024;
+				break;
+			case BGGEN_BGTYPE_TEXT_16x16:
+				depth = 4;
+				maxPltt = 16;
+				maxCharsFmt = 1024;
+				break;
+			case BGGEN_BGTYPE_TEXT_256x1:
+				depth = 8;
+				maxPltt = 1;
+				break;
+			case BGGEN_BGTYPE_AFFINE_256x1:
+				depth = 8;
+				maxPltt = 1;
+				maxCharsFmt = 256;
+				break;
+			case BGGEN_BGTYPE_BITMAP:
+				depth = 8;
+				maxPltt = 1;
+				break;
+		}
+		
+		int maxPlttAddr = paletteBase + nPalettes;
+		int maxColAddr = paletteOffset + nMaxColors;
+		
 		PTC_FAIL_IF(outMode == PTC_OUT_MODE_NNSTGA,               "NNS TGA output is not applicable for BG.\n");
-		PTC_FAIL_IF(depth != 4 && depth != 8,                     "Invalid bit depth specified for BG (%d).\n", depth);
-		PTC_FAIL_IF(nMaxColors > (1 << depth),                    "Invalid color count per palette specified for BG of %d bit depth (%d).\n", depth, nMaxColors);
-		PTC_FAIL_IF(paletteOffset >= (1 << depth),                "Invalid palette offset specified (%d).\n", paletteOffset);
-		PTC_FAIL_IF(nPalettes > 16,                               "Invalid palette count specified for BG (%d).\n", nPalettes);
-		PTC_FAIL_IF(paletteBase >= 16,                            "Invalid palette base specified for BG (%d).\n", paletteBase);
-		PTC_FAIL_IF(nMaxChars > 1024 || nMaxChars < -1,           "Invalid maximum character count specified for BG (%d).\n", nMaxChars);
-		PTC_FAIL_IF((bgAffine || bgAffineExt) && depth != 8,      "Affine mode BG must use 8 bit depth.\n");
-		PTC_FAIL_IF((bgAffine               ) && nMaxChars > 256, "Affine mode BG may use no more than 256 characters.\n");
-		PTC_FAIL_IF((bgAffine               ) && nPalettes > 1,   "Affine mode BG may use no more than 1 color palette.\n");
-		PTC_FAIL_IF((bgAffine               ) && paletteBase > 1, "Affine mode BG may use no more than 1 color palette.\n");
-		PTC_FAIL_IF(bgText && depth == 8 && nPalettes > 1,        "Text mode 8bpp BG may use only one palette. Consider affine extended BG?\n");
+		PTC_FAIL_IF(maxColAddr > (1 << depth),                    "Invalid color count per palette specified for BG of %d-bit depth (%d).\n", depth, nMaxColors);
+		PTC_FAIL_IF(maxPlttAddr > maxPltt,                        "Invalid palette count or base specified for BG (%d).\n", nPalettes);
+		PTC_FAIL_IF(nMaxChars > maxCharsFmt || nMaxChars < -1,    "Invalid maximum character count specified for BG (%d).\n", nMaxChars);
 		PTC_FAIL_IF(screenExclusive && (srcChrFile == NULL || srcPalFile == NULL), "Palette and character file required for this command.\n");
 	} else if (mode == MODE_TEXTURE) {
 		//texture mode paramter checks
@@ -954,13 +1029,10 @@ int _tmain(int argc, TCHAR **argv) {
 	if (mode == MODE_BG) {
 		//Generate BG
 		//fix up automatic flags
-
-		if (nMaxColors == -1) nMaxColors = (depth == 4) ? 16 : 256;
-		if (depth == 4 && nMaxColors > 16) nMaxColors = 16;
-		if (depth == 8 && nMaxColors > 256) nMaxColors = 256;
-		if (paletteBase > 15) paletteBase = 15;
-		if (paletteBase + nPalettes > 16) nPalettes = 16 - paletteBase;
-		if (bgAffine && nMaxChars != 1 && nMaxChars > 256) nMaxChars = 256;
+		int depth = 4;
+		if (bgType != BGGEN_BGTYPE_TEXT_16x16) depth = 8;
+		
+		if (nMaxColors == -1) nMaxColors = 1 << depth;
 
 		if (outMode == PTC_OUT_MODE_DIB) {
 			outputScreen = 0;
@@ -1008,25 +1080,19 @@ int _tmain(int argc, TCHAR **argv) {
 		int existingCharsSize = 0;
 		if (srcChrFile != NULL) {
 			//read from file, check it exists
-			int fSize = 0;
-			FILE *chrFp = _tfopen(srcChrFile, _T("rb"));
-			if (chrFp == NULL) {
+			existingChars = PtcReadFile(srcChrFile, &existingCharsSize);
+			if (existingChars == NULL) {
 				puts("Could not read character file.");
 				return 1;
 			}
-			fseek(chrFp, 0, SEEK_END);
-			fSize = ftell(chrFp);
-			fseek(chrFp, 0, SEEK_SET);
-
+			
 			//set character offset based on file size and current bit depth
-			size_t nRead;
-			int nExistingChars = (fSize + 8 * depth - 1) / (8 * depth); //round up
-			existingCharsSize = nExistingChars * (8 * depth);
+			int nExistingChars = (existingCharsSize + 8 * depth - 1) / (8 * depth); // round up
+			int padSize = nExistingChars * (8 * depth);
+			existingChars = PtcPadBuffer(existingChars, existingCharsSize, padSize);
+			
+			existingCharsSize = padSize;
 			if (!explicitCharBase) charBase = nExistingChars;
-			existingChars = calloc(existingCharsSize, 1);
-			nRead = fread(existingChars, fSize, 1, chrFp);
-			(void) nRead;
-			fclose(chrFp);
 		}
 
 		if (!silent) {
@@ -1052,14 +1118,14 @@ int _tmain(int argc, TCHAR **argv) {
 			params.paletteRegion.length = nMaxColors;
 			params.paletteRegion.offset = paletteOffset;
 
-			params.nBits = depth;
+			params.bgType = bgType;
+			params.color0Mode = (bgColor0Use ? BGGEN_COLOR0_USE : BGGEN_COLOR0_FIXED);
 			params.dither.dither = (diffuse != 0);
 			params.dither.diffuse = ((float) diffuse) / 100.0f;
 			params.characterSetting.base = charBase;
 			params.characterSetting.compress = (nMaxChars != -1);
 			params.characterSetting.nMax = nMaxChars;
 			params.characterSetting.alignment = 1;
-			params.characterSetting.tileFlip = bgTileFlip;
 			BgGenerate(pal, &chars, &screen, &palSize, &charSize, &screenSize, px, width, height,
 				&params, &p1, &p1max, &p2, &p2max);
 		} else {
@@ -1069,9 +1135,9 @@ int _tmain(int argc, TCHAR **argv) {
 		}
 		
 		//convert BG format
-		{
+		if (bgType != BGGEN_BGTYPE_BITMAP) {
 			unsigned int convSize = 0;
-			unsigned short *conv = PtcConvertBgScreenData(screen, width / 8, height / 8, bgAffine, bgAffineExt, &convSize);
+			unsigned short *conv = PtcConvertBgScreenData(screen, width / 8, height / 8, bgType, &convSize);
 			
 			free(screen);
 			screen = conv;
@@ -1109,14 +1175,12 @@ int _tmain(int argc, TCHAR **argv) {
 			
 			//get BG screen type
 			GrfBgScreenType scrType = GRF_SCREEN_TYPE_NONE;
-			if (bgAffine) {
-				scrType = GRF_SCREEN_TYPE_AFFINE;
-			} else if (bgAffineExt) {
-				scrType = GRF_SCREEN_TYPE_AFFINE_EXT;
-			} else if (depth == 8) {
-				scrType = GRF_SCREEN_TYPE_TEXT_256x1;
-			} else {
-				scrType = GRF_SCREEN_TYPE_TEXT_16x16;
+			switch (bgType) {
+				case BGGEN_BGTYPE_TEXT_16x16:       scrType = GRF_SCREEN_TYPE_TEXT_16x16; break;
+				case BGGEN_BGTYPE_TEXT_256x1:       scrType = GRF_SCREEN_TYPE_TEXT_256x1; break;
+				case BGGEN_BGTYPE_AFFINE_256x1:     scrType = GRF_SCREEN_TYPE_AFFINE;     break;
+				case BGGEN_BGTYPE_AFFINEEXT_256x16: scrType = GRF_SCREEN_TYPE_AFFINE_EXT; break;
+				case BGGEN_BGTYPE_BITMAP:           scrType = GRF_SCREEN_TYPE_NONE;       break;
 			}
 			
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
@@ -1235,11 +1299,28 @@ int _tmain(int argc, TCHAR **argv) {
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
 			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
 			
+			const char *bgFormatName = "Text";
+			switch (bgType) {
+				case BGGEN_BGTYPE_TEXT_16x16:
+				case BGGEN_BGTYPE_TEXT_256x1:
+					bgFormatName = "Text";
+					break;
+				case BGGEN_BGTYPE_AFFINE_256x1:
+					bgFormatName = "Affine";
+					break;
+				case BGGEN_BGTYPE_AFFINEEXT_256x16:
+					bgFormatName = "Affine EXT";
+					break;
+				case BGGEN_BGTYPE_BITMAP:
+					bgFormatName = "Bitmap";
+					break;
+			}
+			
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
-				bgAffine ? "Affine" : (bgAffineExt ? "Affine EXT" : "Text"), depth, nPalettes,
+				bgFormatName, depth, nPalettes,
 				paletteBase, width, height);
 			fprintf(fpHeader, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
-				bgAffine ? "Affine" : (bgAffineExt ? "Affine EXT" : "Text"), depth, nPalettes,
+				bgFormatName, depth, nPalettes,
 				paletteBase, width, height);
 			fprintf(fp, "#include <stdint.h>\n\n");
 			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
@@ -1345,9 +1426,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 		TEXTURE texture = { 0 };
 
-		TxConversionParameters params;
-		params.callback = NULL;
-		params.callbackParam = NULL;
+		TxConversionParameters params = { 0 };
 		params.colorEntries = nMaxColors;
 		params.dest = &texture;
 		params.diffuseAmount = (float) diffuse / 100.0f;
@@ -1386,7 +1465,7 @@ int _tmain(int argc, TCHAR **argv) {
 				if (!silent) printf("Color count truncated to %d.\n", params.colorEntries);
 			}
 		}
-
+		
 		TxConvert(&params);
 		
 		//trim texture data by height
@@ -1411,7 +1490,7 @@ int _tmain(int argc, TCHAR **argv) {
 			int fmt = FORMAT(texture.texels.texImageParam);
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
-			GrfTexWriteHdr(fp, fmt, width, height, texture.palette.nColors);
+			GrfTexWriteHdr(fp, fmt, width, height, texture.palette.nColors, c0xp);
 			GrfWritePltt(fp, texture.palette.pal, texture.palette.nColors, compressionPolicy);
 			GrfWriteTexImage(fp, texture.texels.texel, texelSize, texture.texels.cmp, indexSize, compressionPolicy);
 			GrfFinalize(fp);
