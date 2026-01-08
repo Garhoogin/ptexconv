@@ -3,6 +3,13 @@
 #include "texconv.h"
 
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifndef _MSC_VER
+#	define min(a,b) ((a)<(b)?(a):(b))
+#	define max(a,b) ((a)>(b)?(a):(b))
+#endif
 
 //optimize for speed rather than size
 #ifndef _DEBUG
