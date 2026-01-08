@@ -22,13 +22,16 @@ This is the command line version of the background and texture converson functio
   	   -h      Display help text
   	
   	BG Options:
-  	   -b  <n> Specify output bit depth {4, 8}
-       -ba     Output BG data as affine
-       -bA     Output BG data as affine extended
+       -bt4    Output BG data as text            (4bpp)
+       -bt8    Output BG data as text            (8bpp)
+       -ba     Output BG data as affine          (8bpp)
+       -bA     Output BG data as affine extended (8bpp, default)
+       -bB     Output BG data as bitmap (no BG screen output)
   	   -p  <n> Use n palettes in output
   	   -po <n> Use per palette offset n
   	   -pc     Use compressed palette
   	   -pb <n> Use palette base index n
+       -p0o    Use color 0 as an opaque color slot
   	   -cb <n> Use character base index n
   	   -cc <n> Compress characters to a maximum of n (default is 1024)
   	   -cn     No character compression
@@ -67,13 +70,22 @@ Also among the general options are those for controlling palette creation and in
 Last among the general options are `-s` which causes the program not to output any text unless in the case of a failure, and `-h` which prints the above usage information without processing any conversions.
 
 ## BG Conversion Options
-First and foremost, the `-b` switch sets the bit depth of the output. Follow it with 4 or 8 for 4-bit and 8-bit graphics respectively. 
+First and foremost, the `-bt4`, `-bt8`, `-ba`, `-bA`, and `-bB` switches set the BG format of the output. These specify the following BG formats:
+| Switch | BG Format |
+| ------ | --------- |
+| `-bt4` | Text (16 colors x 16 palettes) |
+| `-bt8` | Text (256 colors x 1 palette) |
+| `-ba`  | Affine (256 colors x 1 palette) |
+| `-bA`  | Affine Extended (256 colors x 16 palettes) |
+| `-bB`  | Bitmap (256 colors x 1 palette) |
 
 To control the number of palettes to output, use `-p` followed by the number of palettes (between 1 and 16). Generating between 2 and 16 palettes takes more time than creating a single palette. The `-po` followed by a palette offset specifies the offset (into each palette) to start writing colors to. A palette offset of 1, for example, causes the first color of each palette to go unused (indexing will ignore these unused slots as well). The global `-cm` option now controls the number of colors in each palette. The `-pb` option followed by a number between 0 and 15 controls the index of the first palette to write to. The `-pc` option will cause the palette output to include only a subset of the total palette. For a single palette, it will output only the written-to colors of the single palette. For multiple palettes, it will output only those palettes written to, but in their entirety (regardless the palette offset setting). 
 
 In addition, there are a few options for controlling output of graphics data as well. Use the `-cb` option followed by an integer to set the character base index. This is for loading graphics to a nonzero offset into a BG VRAM slot. This number is added to the character index of each screen tile. Next, the `-cc` and `-cn` options control character compression. By default, a maximum of 1024 is used. Identical characters (with H/V flip) are merged, and if there are more than the specified amount, it will merge them until the number specified remain. The `-cn` option disables character compression altogether, resulting in no identical characters being merged. 
 
 There exist a couple of options for writing to cumulative files. Use the `-wp` option to specify a (binary) palette file to read in before conversion. The generated palette will write over this palette, but not replace any other color slots. This allows for a single palette file to be built up over the course of multiple conversions. Then there is the `-wc` option, which specifies a character graphics file to append to. When this is specified and the character base index has not been specified with `-cb`, it will use the end of the file as the character base index (assuming this file uses a base index of 0). If a base index *was* specified with `-cb`, then data in the file will be overwritten with the output of conversion.
+
+BG conversion may use color 0 as an opaque color slot. By default, color 0 is reserved for use by transparent pixels. Specify the `-p0o` switch to enable its use as an opaque color. Specifying this option loses the ability to use transparent pixels in the BG conversion. This option is only effective when the palette offset is 0. For character map color reduction, one opaque color is distributed across color 0 of each created color palette. For this kind of BG to display correctly, ensure that this color 0 ends up in the backdrop color slot in the background palette.
 
 BG conversion also allows for using existing graphics data to create screen files from a source image. Use the `-se` option to generate a screen file exclusively. This option requires specifying palette and character graphics files with the `-wp` and `-wc` options. With `-se` enabled, however, these files are not written to, only read from. The only output file will be the resulting screen file.
 
