@@ -517,7 +517,7 @@ static void PtcTrimTextureData(TEXELS *texels) {
 		texels->texel = realloc(texels->texel, stride * texels->height);
 	} else {
 		//trim by block of 4
-		unsigned int trimHeight = (texels->height + 3) / 4;
+		unsigned int trimHeight = (texels->height + 3) & ~3;
 		unsigned int strideTxel = TEXW(texels->texImageParam);   // stride of 4 rows of pixels
 		unsigned int stridePidx = strideTxel / 2;
 		
@@ -1495,7 +1495,7 @@ int _tmain(int argc, TCHAR **argv) {
 			int fmt = FORMAT(texture.texels.texImageParam);
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
-			GrfTexWriteHdr(fp, fmt, width, height, texture.palette.nColors, c0xp);
+			GrfTexWriteHdr(fp, fmt, width, texture.texels.height, texture.palette.nColors, c0xp);
 			GrfWritePltt(fp, texture.palette.pal, texture.palette.nColors, compressionPolicy);
 			GrfWriteTexImage(fp, texture.texels.texel, texelSize, texture.texels.cmp, indexSize, compressionPolicy);
 			GrfFinalize(fp);
