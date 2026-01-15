@@ -114,7 +114,8 @@ int GrfBgWriteHdr(
 	int             paletteSize
 ) {
 	//write BG header for GRF
-	return GrfWriteHdr(fp, depth, scrType, 0, paletteSize, 8, 8, 0, 0, GRF_GFX_FLAG_TYPE_BG, width, height);
+	int chrSize = (scrType == GRF_SCREEN_TYPE_NONE) ? 0 : 8;
+	return GrfWriteHdr(fp, depth, scrType, 0, paletteSize, chrSize, chrSize, 0, 0, GRF_GFX_FLAG_TYPE_BG, width, height);
 }
 
 int GrfTexWriteHdr(

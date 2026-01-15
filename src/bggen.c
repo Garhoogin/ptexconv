@@ -651,16 +651,34 @@ void BgGenerate(
 		BgTile *t = &tiles[i];
 		if (t->masterTile != (unsigned int) i) continue;
 
-		memcpy(&blocks[64 * t->charNo], t->indices, sizeof(t->indices));
+		unsigned int chno = t->charNo;
+		if (params->bgType != BGGEN_BGTYPE_BITMAP) {
+			//put color index data in character order
+			memcpy(&blocks[chno * 64], t->indices, sizeof(t->indices));
+		} else {
+			//put color index data in bitmap order
+			int chX = (chno % tilesX) * 8;
+			int chY = (chno / tilesX) * 8;
+			for (int y = 0; y < 8; y++) memcpy(&blocks[chX + (chY + y) * tilesX * 8], t->indices + y * 8, 8);
+		}
 	}
 	
 	//prep data output
-	uint16_t *scrdat = (uint16_t *) calloc(nTiles, sizeof(uint16_t));
-	for (int i = 0; i < nTiles; i++) {
-		unsigned int chrno = (tiles[i].charNo + tileBase) & 0x03FF;
-		unsigned int flip = tiles[i].flipMode & 0x3;
-		unsigned int pltt = tiles[i].palette & 0xF;
-		scrdat[i] = chrno | (flip << 10) | (pltt << 12);
+	if (params->bgType != BGGEN_BGTYPE_BITMAP) {
+		//construct the BG screen data
+		uint16_t *scrdat = (uint16_t *) calloc(nTiles, sizeof(uint16_t));
+		for (int i = 0; i < nTiles; i++) {
+			unsigned int chrno = (tiles[i].charNo + tileBase) & 0x03FF;
+			unsigned int flip = tiles[i].flipMode & 0x3;
+			unsigned int pltt = tiles[i].palette & 0xF;
+			scrdat[i] = chrno | (flip << 10) | (pltt << 12);
+		}
+		*pOutScreen = scrdat;
+		*outScreenSize = tilesX * tilesY * sizeof(uint16_t);
+	} else {
+		//bitmap BG: no screen data
+		*pOutScreen = NULL;
+		*outScreenSize = 0;
 	}
 	
 	int outPaletteSize = nBits == 4 ? 256 : ((paletteBase + nPalettes) * 256);
@@ -670,23 +688,20 @@ void BgGenerate(
 			pOutPalette[index] = ColorConvertToDS(palette[index]);
 		}
 	}
+	*outPalSize = outPaletteSize * sizeof(COLOR);
 	
-	*pOutChars = (unsigned char *) calloc(nChars, nBits * 8);
-	for (int i = 0; i < nChars; i++) {
-		unsigned char *dest = (*pOutChars) + (i * nBits * 8);
-
-		if (nBits == 8) {
-			for (int j = 0; j < 64; j++) dest[j] = blocks[i * 64 + j];
-		} else {
-			for (int j = 0; j < 32; j++) {
-				dest[j] = blocks[i * 64 + j * 2] | (blocks[i * 64 + j * 2 + 1] << 4);
-			}
+	//prepare the ouput character data
+	unsigned int outCharsSize = nChars * nBits * 8;
+	unsigned char *outChars = (unsigned char *) calloc(outCharsSize, 1);
+	if (nBits == 8) {
+		memcpy(outChars, blocks, outCharsSize);
+	} else {
+		for (unsigned int i = 0; i < outCharsSize; i++) {
+			outChars[i] = blocks[i * 2] | (blocks[i * 2 + 1] << 4);
 		}
 	}
-	*pOutScreen = scrdat;
-	*outPalSize = outPaletteSize * sizeof(COLOR);
-	*outCharSize = nChars * nBits * 8;
-	*outScreenSize = tilesX * tilesY * sizeof(uint16_t);
+	*pOutChars = outChars;
+	*outCharSize = outCharsSize;
 	
 	free(blocks);
 	free(palette);

@@ -67,6 +67,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NBFP_EXTENSION _T("_pal.bin")
 #define NBFC_EXTENSION _T("_chr.bin")
 #define NBFS_EXTENSION _T("_scr.bin")
+#define NBFB_EXTENSION _T("_bmp.bin")
 
 //Texture file suffixes
 #define NTFX_EXTLEN    8 /* _xxx.bin */
@@ -1037,6 +1038,12 @@ int _tmain(int argc, TCHAR **argv) {
 		//fix up automatic flags
 		int depth = 4;
 		if (bgType != BGGEN_BGTYPE_TEXT_16x16) depth = 8;
+
+		int bitmap = 0;
+		if (bgType == BGGEN_BGTYPE_BITMAP) {
+			bitmap = 1;
+			outputScreen = 0;
+		}
 		
 		if (nMaxColors == -1) nMaxColors = 1 << depth;
 
@@ -1210,7 +1217,7 @@ int _tmain(int argc, TCHAR **argv) {
 				fclose(fp);
 				if (!silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), srcPalFile == NULL ? nameBuffer : srcPalFile);
 
-				memcpy(nameBuffer + baseLength, NBFC_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
+				memcpy(nameBuffer + baseLength, bitmap ? NBFB_EXTENSION : NBFC_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
 				fp = _tfopen(srcChrFile == NULL ? nameBuffer : srcChrFile, _T("wb"));
 				PtcEmitBinaryData(fp, chars, charSize, compressionPolicy);
 				fclose(fp);
