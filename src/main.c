@@ -432,16 +432,17 @@ float mylog2(float d) { //UGLY!
 //based on suggestions for color counts by SGC, interpolated with a log function
 static int PtcAutoSelectTex4x4ColorCount(int bWidth, int bHeight) {
 	int area = bWidth * bHeight;
+	int nColors;
 
-	//for textures smaller than 128x128, use 8*sqrt(area)
 	if (area <= 128 * 128) {
-		int nColors = (int) (8 * sqrt((float) area));
-		nColors = (nColors + 15) & ~15;
-		return nColors;
+		//for textures smaller than 256x256, use 8*sqrt(area)
+		nColors = (int) (8 * sqrt((float) area));
+	} else {
+		//larger sizes, increase by 256 every width/height increment
+		nColors = (int) (256 * (log2f((float) area) - 10));
 	}
-
-	//larger sizes, increase by 256 every width/height increment
-	return (int) (256 * (log2f((float) area) - 10));
+	nColors = (nColors + 15) & ~15;
+	return nColors;
 }
 
 static COLOR32 PtcParseHexColor24(const TCHAR *str) {
