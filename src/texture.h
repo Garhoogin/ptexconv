@@ -46,7 +46,9 @@ typedef struct {
 
 const char *TxNameFromTexFormat(int fmt);
 
-void TxRender(COLOR32 *px, int dstWidth, int dstHeight, TEXELS *texels, PALETTE *palette, int flip);
+void TxRenderRect(COLOR32 *px, unsigned int srcX, unsigned int srcY, unsigned int srcW, unsigned int srcH, TEXELS *texels, PALETTE *palette);
+
+void TxRender(COLOR32 *px, TEXELS *texels, PALETTE *palette);
 
 int TxGetTexelSize(int width, int height, int texImageParam);
 
@@ -57,4 +59,3 @@ int TxGetIndexVramSize(TEXELS *texels);
 int TxGetTexPlttVramSize(PALETTE *palette);
 
 int TxDimensionIsValid(int x);
-

@@ -292,7 +292,8 @@ void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	int width = TEXW(texels->texImageParam);
 	int height = TEXH(texels->texImageParam);
 	COLOR32 *pixels = (COLOR32 *) calloc(width * height, sizeof(COLOR32));
-	TxRender(pixels, width, height, texels, palette, 1);
+	TxRender(pixels, texels, palette);
+	ImgFlip(pixels, width, height, 0, 1);
 	ImgSwapRedBlue(pixels, width, height);
 
 	unsigned char header[] = { 0x14, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 8,

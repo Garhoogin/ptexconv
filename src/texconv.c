@@ -117,10 +117,13 @@ static int TxConvertDirect(TxConversionParameters *params, RxReduction *reductio
 	pltt[0] = 0; // placeholder for transparent color
 	for (unsigned int i = 0; i < 32768; i++) pltt[i + 1] = ColorConvertFromDS((COLOR) i) | 0xFF000000;
 
-	RxApplyFlags(reduction, RX_FLAG_ALPHA_MODE_RESERVE);
+	RxFlag flag = RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_NO_WRITEBACK;
+	if (!params->ditherAlpha) flag |= RX_FLAG_NO_ALPHA_DITHER;      // diable alpha dither
+	else                      flag |= RX_FLAG_NO_ADAPTIVE_DIFFUSE;  // disable adaptive diffusion for alpha dither
+
+	RxApplyFlags(reduction, flag);
 	RxSetProgressCallback(reduction, TxiConvertProgressUpdate, params);
-	RxReduceImageWithContext(reduction, params->px, idxs, params->width, params->height, pltt, 32769,
-		RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_NO_WRITEBACK, diffuse);
+	RxReduceImageWithContext(reduction, params->px, idxs, params->width, params->height, pltt, 32769, flag, diffuse);
 
 	for (unsigned int i = 0; i < params->width * params->height; i++) {
 		if (idxs[i] == 0) txel[i] = 0; // transparent
@@ -182,6 +185,9 @@ static int TxConvertIndexedOpaque(TxConversionParameters *params, RxReduction *r
 	if (txel == NULL || pal == NULL || idxs == NULL) TEXCONV_THROW_STATUS(TEXCONV_NOMEM);
 
 	RxFlag flag = (hasTransparent ? RX_FLAG_ALPHA_MODE_RESERVE : RX_FLAG_ALPHA_MODE_NONE);
+	if (!params->ditherAlpha) flag |= RX_FLAG_NO_ALPHA_DITHER;      // diable alpha dither
+	else                      flag |= RX_FLAG_NO_ADAPTIVE_DIFFUSE;  // disable adaptive diffusion for alpha dither
+
 	RxApplyFlags(reduction, flag);
 
 	RxSetProgressCallback(reduction, TxiConvertProgressUpdate1, params);
@@ -274,7 +280,10 @@ static int TxConvertIndexedTranslucent(TxConversionParameters *params, RxReducti
 
 	// duplicate palette data
 	for (unsigned int i = 0; i <= alphaMax; i++) {
-		unsigned int a = (i * 510 + alphaMax) / (2 * alphaMax);
+		unsigned int a = i;
+		if (alphaMax == 7) a = (a << 2) | (a >> 1); // scale alpha to 5-bit
+		a = (a * 510 + 31) / 62;                    // scale 5-bit alpha to 8-bit
+
 		for (unsigned int j = 0; j < nColors; j++) {
 			palette[j + (i << alphaShift)] = ((palette[j]) & 0x00FFFFFF) | (a << 24);
 		}
@@ -282,17 +291,34 @@ static int TxConvertIndexedTranslucent(TxConversionParameters *params, RxReducti
 
 	TEXCONV_CHECK_ABORT(params->terminate);
 
-	RxFlag flag = RX_FLAG_ALPHA_MODE_PALETTE | RX_FLAG_PRESERVE_ALPHA;
-	if (!params->ditherAlpha) flag |= RX_FLAG_NO_ALPHA_DITHER;
-	RxApplyFlags(reduction, flag);
-
 	RxSetProgressCallback(reduction, TxiConvertProgressUpdate2, params);
-	RxReduceImageWithContext(reduction, params->px, idxs, width, height, palette, 256, flag, diffuse);
 
-	TEXCONV_CHECK_ABORT(params->terminate);
+	if (!params->dither || !params->ditherAlpha) {
+		RxFlag flag = RX_FLAG_ALPHA_MODE_NONE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER;
+		RxApplyFlags(reduction, flag);
+
+		//set the alpha channel for the texel data
+		for (unsigned int i = 0; i < width * height; i++) {
+			unsigned int a = params->px[i] >> 24;
+			a = (a * alphaMax * 2 + 255) / 510;
+
+			//setting upper bits of the texel data
+			txel[i] = a << alphaShift;
+			params->px[i] |= 0xFF000000;
+		}
+
+		//when color and alpha not jointly dithered, we fall back to a simplified model.
+		RxReduceImageWithContext(reduction, params->px, idxs, width, height, palette + (alphaMax << alphaShift), nColors, flag, diffuse);
+	} else {
+		RxFlag flag = RX_FLAG_ALPHA_MODE_PALETTE | RX_FLAG_PRESERVE_ALPHA;
+		RxApplyFlags(reduction, flag);
+
+		//dithering with alpha: use alpha dithered mode
+		RxReduceImageWithContext(reduction, params->px, idxs, width, height, palette, 256, flag, diffuse);
+	}
 
 	//write texel data.
-	for (unsigned int i = 0; i < width * height; i++) txel[i] = (uint8_t) idxs[i];
+	for (unsigned int i = 0; i < width * height; i++) txel[i] |= (uint8_t) idxs[i];
 
 	TEXCONV_CHECK_ABORT(params->terminate);
 
@@ -361,9 +387,9 @@ static int TxiCreatePaletteFromHistogram(RxReduction *reduction, int nColors, CO
 
 	//extract created palette
 	int nUsed = reduction->nUsedColors;
-	memcpy(out, reduction->paletteRgb, nUsed * sizeof(COLOR32));
-	for (int i = nUsed; i < nColors; i++) {
-		out[i] = 0xFF000000;
+	for (int i = 0; i < nUsed; i++) {
+		if (i < nUsed) out[i] = reduction->paletteRgb[i][0];
+		else           out[i] = 0xFF000000;
 	}
 
 	qsort(out, nColors, sizeof(COLOR32), RxColorLightnessComparator);
@@ -431,7 +457,7 @@ static void TxiComputeEndpointsFromHistogram(RxReduction *reduction, int transpa
 	COLOR32 colors[2] = { 0 };
 	int nColors = 0;
 	for (int i = 0; i < reduction->histogram->nEntries; i++) {
-		COLOR32 col = RxConvertYiqToRgb(&reduction->histogramFlat[i]->color);
+		COLOR32 col = RxConvertYiqToRgb(&reduction->histogramFlat[i]->color[0]);
 
 		//round to 15-bit color for counting
 		col = ColorRoundToDS15(col) | 0xFF000000;
@@ -475,8 +501,8 @@ static void TxiComputeEndpointsFromHistogram(RxReduction *reduction, int transpa
 	RxHistEntry *firstEntry = reduction->histogramFlat[0];
 	RxHistEntry *lastEntry = reduction->histogramFlat[reduction->histogram->nEntries - 1];
 
-	COLOR32 full1 = RxConvertYiqToRgb(&firstEntry->color);
-	COLOR32 full2 = RxConvertYiqToRgb(&lastEntry->color);
+	COLOR32 full1 = RxConvertYiqToRgb(&firstEntry->color[0]);
+	COLOR32 full2 = RxConvertYiqToRgb(&lastEntry->color[0]);
 
 	//round to nearest colors.
 	COLOR c1 = ColorConvertToDS(full1);
@@ -702,10 +728,19 @@ static double TxiComputePaletteDifference(RxReduction *reduction, const RxYiqCol
 	
 	for (int i = 0; i < nColors; i++) {
 		const RxYiqColor *yiq1 = &pal1[i], *yiq2 = &pal2[i];
-		double dy = reduction->lumaTable[(int) (yiq1->y + 0.5)] - reduction->lumaTable[(int) (yiq2->y + 0.5)];
+#ifndef RX_SIMD
+		double dy = yiq1->y - yiq2->y;
 		double di = yiq1->i - yiq2->i;
 		double dq = yiq1->q - yiq2->q;
 		total += reduction->yWeight2 * (dy * dy) + reduction->iWeight2 * (di * di) + reduction->qWeight2 * (dq * dq);
+#else
+		__m128 diff = _mm_sub_ps(yiq1->yiq, yiq2->yiq);
+		diff = _mm_mul_ps(diff, diff);
+		diff = _mm_mul_ps(diff, reduction->yiqaWeight2);
+		diff = _mm_add_ps(diff, _mm_shuffle_ps(diff, diff, _MM_SHUFFLE(2, 3, 0, 1)));
+		diff = _mm_add_ss(diff, _mm_movehl_ps(diff, diff));
+		total += _mm_cvtss_f32(diff);
+#endif
 
 		if (total >= nMaxError) return nMaxError * errScale;
 	}
@@ -1054,7 +1089,7 @@ static void TxiRefineRemapColors(uint32_t *texel, uint16_t mode, int to0, int to
 
 static void TxiRefineCoalesceDown(uint32_t *txel, uint16_t *pidx, int nTiles, COLOR *nnsPal, int paletteSize) {
 	(void) paletteSize;
-
+	
 	//we'll enter a pass where we try to coalesce palette indices down. This helps to
 	//free up redundant sections of the palette, making higher-index colors unused.
 	for (int i = 0; i < nTiles; i++) {
@@ -1586,7 +1621,7 @@ TxConversionResult TxConvert(TxConversionParameters *params) {
 		params->dest->palette.name = _strdup(params->pnam);
 	}
 
-	if (result == TEXCONV_SUCCESS) TxRender(params->px, sourceWidth, sourceHeight, &params->dest->texels, &params->dest->palette, 0);
+	if (result == TEXCONV_SUCCESS) TxRenderRect(params->px, 0, 0, sourceWidth, sourceHeight, &params->dest->texels, &params->dest->palette);
 	
 Cleanup:
 	//free resources

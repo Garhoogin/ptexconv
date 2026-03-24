@@ -80,7 +80,7 @@ static double BgiTileDifference(RxReduction *reduction, BgTile *t1, BgTile *t2, 
 	return err;
 }
 
-static void BgiAddTileToTotal(RxReduction *reduction, RxYiqColor *pxBlock, BgTile *tile) {
+static void BgiAddTileToTotal(RxYiqColor *pxBlock, BgTile *tile) {
 	unsigned int iXor = 0;
 	if (tile->flipMode & TILE_FLIPX) iXor ^= 007;
 	if (tile->flipMode & TILE_FLIPY) iXor ^= 070;
@@ -91,9 +91,9 @@ static void BgiAddTileToTotal(RxReduction *reduction, RxYiqColor *pxBlock, BgTil
 
 		RxYiqColor yiq;
 		RxConvertRgbToYiq(col, &yiq);
-		dest->y += yiq.a * (float) reduction->lumaTable[(int) (yiq.y + 0.5)];
-		dest->i += yiq.a * yiq.i;
-		dest->q += yiq.a * yiq.q;
+		dest->y += yiq.y;
+		dest->i += yiq.i;
+		dest->q += yiq.q;
 		dest->a += yiq.a;
 	}
 }
@@ -366,21 +366,18 @@ int BgPerformCharacterCompression(
 		RxYiqColor pxBlock[64] = { 0 };
 		for (unsigned int j = 0; j < nTiles; j++) {
 			BgTile *tile2 = &tiles[j];
-			if (tile2->masterTile == i) BgiAddTileToTotal(reduction, pxBlock, tile2);
+			if (tile2->masterTile == i) BgiAddTileToTotal(pxBlock, tile2);
 		}
 
 		//divide by count, convert to 32-bit RGB
 		int nRep = tile->nRepresents;
 		for (unsigned int j = 0; j < 64; j++) {
-			float invA = pxBlock[j].a == 0.0f ? 1.0f : 1.0f / pxBlock[j].a;
-
-			pxBlock[j].y *= invA;
-			pxBlock[j].i *= invA;
-			pxBlock[j].q *= invA;
+			pxBlock[j].y /= nRep;
+			pxBlock[j].i /= nRep;
+			pxBlock[j].q /= nRep;
 			pxBlock[j].a /= nRep;
 		}
 		for (unsigned int j = 0; j < 64; j++) {
-			pxBlock[j].y = (float) (pow(pxBlock[j].y * 0.00195695, 1.0 / reduction->gamma) * 511.0);
 			tile->px[j] = RxConvertYiqToRgb(&pxBlock[j]);
 		}
 
@@ -401,7 +398,7 @@ int BgPerformCharacterCompression(
 		const COLOR32 *pal = palette + (bestPalette << nBits);
 		int idxs[64];
 		RxReduceImageWithContext(reduction, tile->px, idxs, 8, 8, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset,
-			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA, 0.0f);
+			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER, 0.0f);
 		for (unsigned int j = 0; j < 64; j++) {
 			tile->indices[j] = idxs[j] == 0 ? 0 : (idxs[j] + paletteOffset - !!paletteOffset);
 			tile->px[j] = tile->indices[j] ? (pal[tile->indices[j]] | 0xFF000000) : 0;
@@ -439,7 +436,7 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 		effectivePaletteSize--;
 		effectivePaletteOffset++;
 	}
-	
+
 	for (int i = 0; i < nTiles; i++) {
 		BgTile *tile = &tiles[i];
 
@@ -468,7 +465,7 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 		//transparent.
 		int idxs[64];
 		RxReduceImageWithContext(reduction, tile->px, idxs, 8, 8, pal + effectivePaletteOffset - 1, effectivePaletteSize + 1,
-			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA, diffuse);
+			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER, diffuse);
 		for (int j = 0; j < 64; j++) {
 			//YIQ color
 			RxConvertRgbToYiq(tile->px[j], &tile->pxYiq[j]);
@@ -477,6 +474,11 @@ void BgSetupTiles(BgTile *tiles, int nTiles, int nBits, COLOR32 *palette, int pa
 			tile->indices[j] = idxs[j] == 0 ? 0 : (idxs[j] + effectivePaletteOffset - 1);
 			tile->px[j] = pal[tile->indices[j]];
 		}
+
+#ifdef BGGEN_USE_DCT
+		//compute DCT
+		BgiComputeDct(reduction, tile);
+#endif
 
 		tile->masterTile = i;
 		tile->nRepresents = 1;
