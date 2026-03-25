@@ -23,6 +23,8 @@
 #   define _tprintf printf
 #   define _ftprintf fprintf
 #   define _tcslen strlen
+#   define _tcsdup strdup
+#   define _tcsrchr strrchr
 #   define _ttoi atoi
 #endif
 
@@ -40,6 +42,14 @@
 //make sure we have an image I/O provider
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#define PTC_INFILE_MAX RX_PALETTE_MAX_COUNT
+
+typedef struct PtcImage_ {
+	COLOR32 *px;
+	int width;
+	int height;
+} PtcImage;
 
 typedef enum PtcDataType_ {
 	PTC_GMODE_BG,         // Data output is a background graphic
@@ -69,9 +79,10 @@ typedef struct PtcOptions_ {
 	COLOR32 alphaKey;
 	
 	//file names for conversion
-	const TCHAR *srcImage;     // path of input image
-	const TCHAR *outBase;      // base file output name
-	const TCHAR *fixedPalette; // file name of fixed palette
+	const TCHAR *(srcFiles[PTC_INFILE_MAX]);  // path of input image
+	const TCHAR *outBase;                     // base file output name
+	const TCHAR *fixedPalette;                // file name of fixed palette
+	int nSrcFile;                             // number of input files
 	
 	//dithering options
 	int diffuse;      // the diffusion amount, in percent
@@ -125,7 +136,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.5.3.0"
+#define VERSION "1.6.0.0"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -267,6 +278,8 @@ static COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHei
 #endif
 
 }
+
+extern int ilog2(int x);
 
 static int PtcImageHasTranslucent(const COLOR32 *px, int nWidth, int nHeight) {
 	for (int i = 0; i < nWidth * nHeight; i++) {
@@ -920,7 +933,7 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 				const TCHAR *fmtString = argv[i];
 
 				//what format?
-				     if (_tcscmp(fmtString, _T("a3i5"      )) == 0) opt->texFmt = CT_A3I5;
+				if      (_tcscmp(fmtString, _T("a3i5"      )) == 0) opt->texFmt = CT_A3I5;
 				else if (_tcscmp(fmtString, _T("a5i3"      )) == 0) opt->texFmt = CT_A5I3;
 				else if (_tcscmp(fmtString, _T("palette4"  )) == 0) opt->texFmt = CT_4COLOR;
 				else if (_tcscmp(fmtString, _T("palette16" )) == 0) opt->texFmt = CT_16COLOR;
@@ -987,8 +1000,10 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 			opt->compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;
 		}
 		
-		else if (arg[0] != _T('-')) { //not a switch
-			opt->srcImage = arg;
+		else if (arg[0] != _T('-')) { // not a switch
+			PTC_FAIL_IF(opt->nSrcFile >= PTC_INFILE_MAX, "Too many input files.\n");
+			
+			opt->srcFiles[opt->nSrcFile++] = arg;
 		}
 
 		//unknown switch
@@ -1007,7 +1022,7 @@ int _tmain(int argc, TCHAR **argv) {
 	PtcOptParse(&opt, argc, argv);
 
 	//check for errors
-	PTC_FAIL_IF(opt.srcImage == NULL, "No source image specified.\n");
+	PTC_FAIL_IF(opt.nSrcFile == 0, "No source image specified.\n");
 	PTC_FAIL_IF(opt.outBase == NULL, "No output name specified.\n");
 	PTC_FAIL_IF(opt.diffuse < 0 || opt.diffuse > 100, "Diffuse amount out of range (%d)\n", opt.diffuse);
 	
@@ -1056,26 +1071,34 @@ int _tmain(int argc, TCHAR **argv) {
 	//MBS copy of base
 	int baseLength = _tcslen(opt.outBase);
 
-	int width, height;
-	COLOR32 *px = tgdipReadImage(opt.srcImage, &width, &height);
-	PTC_FAIL_IF(px == NULL, "Could not read image file.\n");
+	PtcImage images[PTC_INFILE_MAX];
+	for (int i = 0; i < opt.nSrcFile; i++) {
+		images[i].px = tgdipReadImage(opt.srcFiles[i], &images[i].width, &images[i].height);
+		PTC_FAIL_IF(images[i].px == NULL, "Could not read image file.\n");
+	}
 	
 	//apply alpha key
 	if (opt.useAlphaKey) {
-		for (int i = 0; i < width * height; i++) {
-			COLOR32 c = px[i];
-			if ((c & 0xFFFFFF) == (opt.alphaKey & 0xFFFFFF)) px[i] = 0;
+		for (int j = 0; j < opt.nSrcFile; j++) {
+			for (int i = 0; i < images[j].width * images[j].height; i++) {
+				COLOR32 c = images[j].px[i];
+				if ((c & 0xFFFFFF) == (opt.alphaKey & 0xFFFFFF)) images[j].px[i] = 0;
+			}
 		}
 	}
 	
-	//preprocess transparent pixels
-	for (int i = 0; i < width * height; i++) {
-		COLOR32 c = px[i];
-		if (((c >> 24) & 0xFF) == 0) px[i] = 0;
+	//preprocess transparent pixels by zeroing RGB color channels of transparent pixels
+	for (int j = 0; j < opt.nSrcFile; j++) {
+		for (int i = 0; i < images[j].width * images[j].height; i++) {
+			COLOR32 c = images[j].px[i];
+			if (((c >> 24) & 0xFF) == 0) images[j].px[i] = 0;
+		}
 	}
 	
 	if (opt.genMode == PTC_GMODE_BG) {
 		//Generate BG
+		PTC_FAIL_IF(opt.nSrcFile > 1, "Too many input images for BG generator.\n");
+		
 		//fix up automatic flags
 		int depth = 4;
 		if (opt.bgType != BGGEN_BGTYPE_TEXT_16x16) depth = 8;
@@ -1176,18 +1199,19 @@ int _tmain(int argc, TCHAR **argv) {
 			params.characterSetting.compress = (opt.nMaxChars != -1);
 			params.characterSetting.nMax = opt.nMaxChars;
 			params.characterSetting.alignment = 1;
-			BgGenerate(pal, &chars, &screen, &palSize, &charSize, &screenSize, px, width, height,
+			BgGenerate(pal, &chars, &screen, &palSize, &charSize, &screenSize, images[0].px, images[0].width, images[0].height,
 				&params, &p1, &p1max, &p2, &p2max);
 		} else {
 			//from existing palette+char
-			BgAssemble(px, width, height, depth, pal, opt.nPalettes, existingChars, existingCharsSize / (8 * depth),
-				&screen, &screenSize, opt.balance.balance, opt.balance.colorBalance, opt.balance.enhanceColors);
+			BgAssemble(images[0].px, images[0].width, images[0].height, depth, pal, opt.nPalettes, existingChars,
+				existingCharsSize / (8 * depth), &screen, &screenSize,
+				opt.balance.balance, opt.balance.colorBalance, opt.balance.enhanceColors);
 		}
 		
 		//convert BG format
 		if (opt.bgType != BGGEN_BGTYPE_BITMAP) {
 			unsigned int convSize = 0;
-			unsigned short *conv = PtcConvertBgScreenData(screen, width / 8, height / 8, opt.bgType, &convSize);
+			unsigned short *conv = PtcConvertBgScreenData(screen, images[0].width / 8, images[0].height / 8, opt.bgType, &convSize);
 			
 			free(screen);
 			screen = conv;
@@ -1235,7 +1259,7 @@ int _tmain(int argc, TCHAR **argv) {
 			
 			FILE *fp = _tfopen(nameBuffer, _T("wb"));
 			GrfWriteHeader(fp);
-			GrfBgWriteHdr(fp, depth, scrType, width, height, paletteOutSize);
+			GrfBgWriteHdr(fp, depth, scrType, images[0].width, images[0].height, paletteOutSize);
 			GrfWritePltt(fp, pal, paletteOutSize, opt.compressionPolicy);
 			GrfWriteGfx(fp, chars, charSize, opt.compressionPolicy);
 			GrfWriteScr(fp, screen, screenSize, opt.compressionPolicy);
@@ -1281,7 +1305,7 @@ int _tmain(int argc, TCHAR **argv) {
 			//suffix filename with .bmp, reserve 5 characters+base length
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, _T(".bmp"));
 
-			int charsX = width / 8, charsY = height / 8;
+			int charsX = images[0].width / 8, charsY = images[0].height / 8;
 			int outWidth = charsX * 8, outHeight = charsY * 8;
 			int bytesPerChar = depth == 8 ? 64 : 32;
 			int *indexBuffer = (int *) calloc(outWidth * outHeight, sizeof(int));
@@ -1312,7 +1336,7 @@ int _tmain(int argc, TCHAR **argv) {
 			for (int i = 0; i < palSize / 2; i++) {
 				palette32[i] = ColorConvertFromDS(pal[i]);
 			}
-			PtcWriteBitmap(palette32, palSize / 2, indexBuffer, width, height, nameBuffer);
+			PtcWriteBitmap(palette32, palSize / 2, indexBuffer, images[0].width, images[0].height, nameBuffer);
 
 			if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
 
@@ -1327,7 +1351,7 @@ int _tmain(int argc, TCHAR **argv) {
 			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
 
 			//find BG name
-			const TCHAR *name = PtcGetFileName(opt.srcImage);
+			const TCHAR *name = PtcGetFileName(opt.srcFiles[0]);
 
 			//copy to MBS buffer, stripping extension too
 			char *bgName = (char *) calloc(_tcslen(name) + 1, sizeof(char));
@@ -1368,10 +1392,10 @@ int _tmain(int argc, TCHAR **argv) {
 			
 			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
 				bgFormatName, depth, opt.nPalettes,
-				opt.paletteBase, width, height);
+				opt.paletteBase, images[0].width, images[0].height);
 			fprintf(fpHeader, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
 				bgFormatName, depth, opt.nPalettes,
-				opt.paletteBase, width, height);
+				opt.paletteBase, images[0].width, images[0].height);
 			fprintf(fp, "#include <stdint.h>\n\n");
 			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
 
@@ -1415,10 +1439,39 @@ int _tmain(int argc, TCHAR **argv) {
 		if (screen != NULL) free(screen);
 	} else {
 		//Generate Texture
+		
+		//check image dimensions
+		for (int i = 1; i < opt.nSrcFile; i++) {
+			if (images[i].width != images[0].width || images[i].height != images[0].height) {
+				PTC_FAIL_IF(1, "Input images must all have the same dimension.\n");
+			}
+		}
+		int width = images[0].width, height = images[0].height;
+		
 		//fix up automatic flags
 		if (opt.texFmt == -1) {
-			opt.texFmt = PtcAutoSelectTextureFormat(px, width, height);
+			opt.texFmt = PtcAutoSelectTextureFormat(images[0].px, width, height);
+			
+			if (opt.nSrcFile > 1 && !(opt.texFmt == CT_4COLOR || opt.texFmt == CT_16COLOR || opt.texFmt == CT_256COLOR)) {
+				//set texture format to palette256 by default
+				opt.texFmt = CT_256COLOR;
+			}
 		}
+		
+		//checks for multiple image generation mode
+		if (opt.nSrcFile > 1) {
+			switch (opt.texFmt) {
+				case CT_4COLOR:
+				case CT_16COLOR:
+				case CT_256COLOR:
+					//OK
+					break;
+				default:
+					PTC_FAIL_IF(1, "The texture format is not supported for multiple palette generation.\n");
+					break;
+			}
+		}
+		
 		if (opt.nMaxColors == -1) {
 			switch (opt.texFmt) {
 				case CT_A3I5     : opt.nMaxColors =  32; break;
@@ -1432,13 +1485,19 @@ int _tmain(int argc, TCHAR **argv) {
 					break;
 			}
 		}
+		
+		//concatenate all pixel buffers
+		COLOR32 *px = (COLOR32 *) calloc(width * height * opt.nSrcFile, sizeof(COLOR32));
+		for (int i = 0; i < opt.nSrcFile; i++) {
+			memcpy(px + i * (width * height), images[i].px, width * height * sizeof(COLOR32));
+		}
 
 		//infer color 0 mode
 		if (opt.c0xp == -1) {
 			opt.c0xp = 0;
 			
 			if (opt.texFmt == CT_4COLOR || opt.texFmt == CT_16COLOR || opt.texFmt == CT_256COLOR) {
-				for (int i = 0; i < width * height; i++) {
+				for (int i = 0; i < width * height * opt.nSrcFile; i++) {
 					unsigned int a = px[i] >> 24;
 					if (a < 0x80) {
 						opt.c0xp = 1; // transparent pixel presence
@@ -1463,37 +1522,112 @@ int _tmain(int argc, TCHAR **argv) {
 			opt.nMaxColors, opt.texFmt, opt.diffuse, width, height);
 
 		TEXTURE texture = { 0 };
-
-		TxConversionParameters params = { 0 };
-		params.dest = &texture;
-		params.colorEntries = opt.nMaxColors;
-		params.diffuseAmount = (float) opt.diffuse / 100.0f;
-		params.dither = !!opt.diffuse;
-		params.ditherAlpha = params.dither && opt.ditherAlpha && (opt.texFmt == CT_A3I5 || opt.texFmt == CT_A5I3);
-		params.useFixedPalette = opt.fixedPalette != NULL;
-		params.fixedPalette = NULL;
-		params.fmt = opt.texFmt;
-		params.width = width;
-		params.height = height;
-		params.px = px;
-		params.c0xp = opt.c0xp;
-		params.threshold = opt.tex4x4Threshold;
-		params.balance = opt.balance.balance;
-		params.colorBalance = opt.balance.colorBalance;
-		params.enhanceColors = opt.balance.enhanceColors;
-		params.pnam = (char *) calloc(1, 1);
-
-		if (opt.fixedPalette != NULL) {
-			int size;
-			params.fixedPalette = (COLOR *) PtcReadFile(opt.fixedPalette, &size);
-
-			if (params.colorEntries > (unsigned int) (size >> 1)) {
-				params.colorEntries = size >> 1;
-				if (!opt.silent) printf("Color count truncated to %d.\n", params.colorEntries);
-			}
-		}
 		
-		TxConvert(&params);
+		if (opt.nSrcFile == 1) {
+			//generation mode for one single image: call to texture conversion routines
+			TxConversionParameters params = { 0 };
+			params.dest = &texture;
+			params.colorEntries = opt.nMaxColors;
+			params.diffuseAmount = (float) opt.diffuse / 100.0f;
+			params.dither = !!opt.diffuse;
+			params.ditherAlpha = params.dither && opt.ditherAlpha && (opt.texFmt == CT_A3I5 || opt.texFmt == CT_A5I3);
+			params.useFixedPalette = opt.fixedPalette != NULL;
+			params.fixedPalette = NULL;
+			params.fmt = opt.texFmt;
+			params.width = width;
+			params.height = height;
+			params.px = images[0].px;
+			params.c0xp = opt.c0xp;
+			params.threshold = opt.tex4x4Threshold;
+			params.balance = opt.balance.balance;
+			params.colorBalance = opt.balance.colorBalance;
+			params.enhanceColors = opt.balance.enhanceColors;
+			params.pnam = (char *) calloc(1, 1);
+			
+			//read the fixed palette file, if one was specified
+			if (opt.fixedPalette != NULL) {
+				int size;
+				params.fixedPalette = (COLOR *) PtcReadFile(opt.fixedPalette, &size);
+
+				if (params.colorEntries > (unsigned int) (size >> 1)) {
+					params.colorEntries = size >> 1;
+					if (!opt.silent) printf("Color count truncated to %d.\n", params.colorEntries);
+				}
+			}
+			
+			TxConvert(&params);
+			
+			if (params.fixedPalette != NULL) free(params.fixedPalette);
+		} else {
+			//generation mode for multiple input images
+			PTC_FAIL_IF(opt.fixedPalette != NULL, "Multiple image generation texture mode does not support the fixed palette.\n");
+			
+			RxFlag flag = RX_FLAG_NO_WRITEBACK | RX_FLAG_NO_ALPHA_DITHER;
+			if (opt.c0xp) flag |= RX_FLAG_ALPHA_MODE_RESERVE;
+			else          flag |= RX_FLAG_ALPHA_MODE_NONE;
+			
+			int padHeight = 1;
+			while (padHeight < height) padHeight <<= 1;
+			unsigned int nPx = width * padHeight;
+			
+			float diffuse = (float) opt.diffuse / 100.0f;
+			
+			RxReduction *reduction = RxNew(opt.balance.balance, opt.balance.colorBalance, opt.balance.enhanceColors);
+			RxSetPaletteLayers(reduction, opt.nSrcFile);
+			RxApplyFlags(reduction, flag);
+			
+			//build histogram and create the palette
+			RxHistAdd(reduction, px, width, height);
+			RxHistFinalize(reduction);
+			RxComputePalette(reduction, opt.nMaxColors - (opt.c0xp ? 1 : 0));
+			
+			//get the palette data
+			COLOR32 *pltt = (COLOR32 *) calloc(opt.nSrcFile * opt.nMaxColors, sizeof(COLOR32));
+			RxSortPalette(reduction, RX_FLAG_SORT_ONLY_USED | RX_FLAG_SORT_END_DIFFER);
+			for (int i = 0; i < opt.nSrcFile; i++) {
+				RxGetPalette(reduction, pltt + i * opt.nMaxColors, i);
+			}
+			
+			int *indices = (int *) calloc(width * height, sizeof(int));
+			RxReduceImageWithContext(reduction, px, indices, width, height, pltt, opt.nMaxColors, flag, diffuse);
+			RxFree(reduction);
+			
+			//create the texel data
+			unsigned int bpp = bppArray[opt.texFmt];
+			unsigned int texelSize = (width * padHeight * bpp) / 8;
+			unsigned char *texel = (unsigned char *) calloc(texelSize, 1);
+
+			unsigned int pxPerByte = 8 / bpp;
+			for (unsigned int i = 0; i < nPx; i++) {
+				unsigned char icol = (unsigned char) indices[i];
+
+				unsigned int iPx = i / pxPerByte;
+				unsigned int shift = (i % pxPerByte) * bpp;
+				texel[iPx] |= icol << shift;
+			}
+			free(indices);
+
+			//compute the TEXIMAGE_PARAM
+			uint32_t texImageParam = 0;
+			if (opt.c0xp) texImageParam |= (1 << 29);
+			texImageParam |= (1 << 17) | (1 << 16);
+			texImageParam |= (ilog2(width >> 3) << 20) | (ilog2(padHeight >> 3) << 23);
+			texImageParam |= opt.texFmt << 26;
+			
+			texture.texels.name = strdup("");
+			texture.texels.height = height;
+			texture.texels.texel = texel;
+			texture.texels.cmp = NULL;
+			texture.texels.texImageParam = texImageParam;
+			
+			texture.palette.name = strdup("");
+			texture.palette.nColors = opt.nSrcFile * opt.nMaxColors;
+			texture.palette.pal = (COLOR *) calloc(texture.palette.nColors, sizeof(COLOR));
+			for (int i = 0; i < opt.nSrcFile * opt.nMaxColors; i++) {
+				texture.palette.pal[i] = ColorConvertToDS(pltt[i]);
+			}
+			free(pltt);
+		}
 		
 		//trim texture data by height
 		if (opt.outMode != PTC_OUT_MODE_NNSTGA && opt.trimT) {
@@ -1534,11 +1668,42 @@ int _tmain(int argc, TCHAR **argv) {
 
 			//output palette if not direct
 			if (opt.texFmt != CT_DIRECT && (opt.fixedPalette == NULL || opt.outFixedPalette)) {
-				memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
-				fp = _tfopen(nameBuffer, _T("wb"));
-				PtcEmitBinaryData(fp, texture.palette.pal, texture.palette.nColors * sizeof(COLOR), opt.compressionPolicy);
-				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+				//depending on the number of input images, we may have to use a more specific name template.
+				if (opt.nSrcFile == 1) {
+					//suffix _pal.bin for single palette
+					memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
+					fp = _tfopen(nameBuffer, _T("wb"));
+					PtcEmitBinaryData(fp, texture.palette.pal, texture.palette.nColors * sizeof(COLOR), opt.compressionPolicy);
+					fclose(fp);
+					if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+				} else {
+					//suffix _imageName_pal.bin for multiple palette
+					for (int i = 0; i < opt.nSrcFile; i++) {
+						const TCHAR *imageFileName = PtcGetFileName(opt.srcFiles[i]);
+						
+						//strip suffix
+						TCHAR *imageName = _tcsdup(imageFileName);
+						if (_tcsrchr(imageName, _T('.')) != NULL) {
+							*_tcsrchr(imageName, _T('.')) = _T('\0');
+						}
+						
+						//suffix file name: outBase_imageName_pal.bin
+						TCHAR *pltName1 = PtcSuffixFileName(opt.outBase, _T("_"));
+						TCHAR *pltName2 = PtcSuffixFileName(pltName1, imageName);
+						TCHAR *pltName = PtcSuffixFileName(pltName2, NTFP_EXTENSION);
+						free(pltName1);
+						free(pltName2);
+						
+						//put data
+						fp = _tfopen(pltName, _T("wb"));
+						PtcEmitBinaryData(fp, texture.palette.pal + i * opt.nMaxColors, opt.nMaxColors * sizeof(COLOR), opt.compressionPolicy);
+						fclose(fp);
+						
+						if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pltName);
+						free(pltName);
+						free(imageName);
+					}
+				}
 			}
 
 			//output index if 4x4
@@ -1566,7 +1731,7 @@ int _tmain(int argc, TCHAR **argv) {
 			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
 
 			//find texture name
-			const TCHAR *name = PtcGetFileName(opt.srcImage);
+			const TCHAR *name = PtcGetFileName(opt.srcFiles[0]);
 
 			//copy to MBS buffer, stripping extension too
 			char *texName = (char *) calloc(_tcslen(name) + 1, sizeof(char));
@@ -1630,8 +1795,9 @@ int _tmain(int argc, TCHAR **argv) {
 			
 			free(texName);
 			free(nameBuffer);
-			if (params.fixedPalette != NULL) free(params.fixedPalette);
 		}
+		
+		free(px);
 	}
 
 	return 0;
