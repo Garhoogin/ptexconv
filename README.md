@@ -112,6 +112,8 @@ When using a fixed palette, the palette file is read (and assumed not to be comp
 
 When using palette4, palette16 or palette256 texture formats, color index 0 is made the transparent color if there exists at least one pixel in the input image with an alpha value of less than half. The color 0 mode can be overridden using the `-t0x` or `-t0o` options. Specify `-t0x` to reserve color 0 for transparency, or `-t0o` to use it as an opaque color.
 
+The texture conversion allows for the creation of palette swap textures in select formats (palette4, palette16, and palette256). In this mode, multiple images (up to 16) may be input, and the output of conversion is a single texture with multiple palettes. Each input image must have the same dimensions. When the output is raw binary data, each palette is output as a separate file, while in other formats the palettes are concatenated in the order specified by the command line arguments. Enable this mode by specifying more than one input image on the command line.
+
 ## Compression Options
 By default, output files are not compresed. Compression settings are valid for binary files, C source files, and GRF files. For C source files, the compression is applied to the data before writing C source output. For binary files, the whole file is compressed. For GRF files, the file's binary blocks are independently compressed.
 
@@ -141,4 +143,9 @@ ptexconv -gb -b 8 -p 4 -pb 2 -pc background.png -o background
 **Example 4**: using an existing 4bpp tileset with 12 palettes to construct a background:
 ```
 ptexconv -gb -b 4 -p 12 image.png -wp tileset_pal.bin -wc tileset_chr.bin -se -o bg_constructed
+```
+
+**Example 5**: creating palette swap textures for 4 alternative colorations of a texture (creating output files `out_tex.bin`, `out_el_earth_pal.bin`, `out_el_air_pal.bin`, `out_el_fire_pal.bin`, and `out_el_water_pal.bin`):
+```
+ptexconv -gt -ob -f palette16 el_earth.png el_air.png el_fire.png el_water.png -o out
 ```
