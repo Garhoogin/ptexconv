@@ -764,6 +764,442 @@ static void *PtcPadBuffer(void *buf, unsigned int size, unsigned int newSize) {
 	exit(1);                               \
 }
 
+typedef void (*PtcSwitchProc) (PtcOptions *options, TCHAR **argv);
+
+typedef struct PtcSwitch_ {
+	const TCHAR *switchName;  // name of switch on the command line
+	int nArguments;           // number of additional arguments expected for the switch
+	PtcSwitchProc proc;       // switch handler
+} PtcSwitch;
+
+static void PtcSwitch_h(PtcOptions *options, TCHAR **argv) {
+	(void) options;
+	(void) argv;
+	
+	//print help message and exit (stop further command processing)
+	PtcPrintHelpMessage();
+	exit(0);
+}
+
+static void PtcSwitch_s(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set silent mode on
+	options->silent = 1;
+}
+
+static void PtcSwitch_v(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set silent mode off
+	options->silent = 0;
+}
+
+static void PtcSwitch_o(PtcOptions *options, TCHAR **argv) {
+	//set output base file name
+	options->outBase = argv[0];
+}
+
+static void PtcSwitch_k(PtcOptions *options, TCHAR **argv) {
+	//set the alpha key
+	options->useAlphaKey = 1;
+	options->alphaKey = PtcParseHexColor24(argv[0]);
+}
+
+static void PtcSwitch_d(PtcOptions *options, TCHAR **argv) {
+	//set the diffusion amount
+	options->diffuse = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_bb(PtcOptions *options, TCHAR **argv) {
+	//set lightness-color balance
+	options->balance.balance = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_bc(PtcOptions *options, TCHAR **argv) {
+	//set color balance
+	options->balance.colorBalance = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_be(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set enhance colors enabled
+	options->balance.enhanceColors = 1;
+}
+
+static void PtcSwitch_cm(PtcOptions *options, TCHAR **argv) {
+	//set max colors
+	options->nMaxColors = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_gb(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set generator mode to BG mode
+	options->genMode = PTC_GMODE_BG;
+}
+
+static void PtcSwitch_gt(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set generator mode to texture mode
+	options->genMode = PTC_GMODE_TEXTURE;
+}
+
+static void PtcSwitch_ob(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set output type to binary
+	options->outMode = PTC_OUT_MODE_BINARY;
+}
+
+static void PtcSwitch_oc(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set output type to C source+header
+	options->outMode = PTC_OUT_MODE_C;
+}
+
+static void PtcSwitch_og(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set output type to GRF
+	options->outMode = PTC_OUT_MODE_GRF;
+}
+
+static void PtcSwitch_od(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set output type to DIB
+	options->outMode = PTC_OUT_MODE_DIB;
+}
+
+static void PtcSwitch_ot(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set output type to NNS TGA
+	options->outMode = PTC_OUT_MODE_NNSTGA;
+}
+
+static void PtcSwitch_cno(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add "no" compression to compression types
+	options->compressionPolicy |= CX_COMPRESSION_NONE;
+}
+
+static void PtcSwitch_cbios(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add all BIOS compression types
+	options->compressionPolicy |= CX_COMPRESSION_LZ;
+	options->compressionPolicy |= CX_COMPRESSION_HUFFMAN4;
+	options->compressionPolicy |= CX_COMPRESSION_HUFFMAN8;
+	options->compressionPolicy |= CX_COMPRESSION_RLE;
+}
+
+static void PtcSwitch_clz(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add LZ compression
+	options->compressionPolicy |= CX_COMPRESSION_LZ;
+}
+
+static void PtcSwitch_ch(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add Huffman compression types
+	options->compressionPolicy |= CX_COMPRESSION_HUFFMAN4;
+	options->compressionPolicy |= CX_COMPRESSION_HUFFMAN8;
+}
+
+static void PtcSwitch_ch4(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add 4-bit Huffman
+	options->compressionPolicy |= CX_COMPRESSION_HUFFMAN4;
+}
+
+static void PtcSwitch_ch8(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add 8-bit Huffman
+	options->compressionPolicy |= CX_COMPRESSION_HUFFMAN8;
+}
+
+static void PtcSwitch_crl(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add RLE compression
+	options->compressionPolicy |= CX_COMPRESSION_RLE;
+}
+
+static void PtcSwitch_clzx(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//add LZX compression
+	options->compressionPolicy |= CX_COMPRESSION_LZX;
+}
+
+static void PtcSwitch_c8(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//allow VRAM-unsafe compression
+	options->compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;
+}
+
+static void PtcSwitch_b(PtcOptions *options, TCHAR **argv) {
+	//LEGACY: bit depth select (4bpp -> text 16x16, 8bpp -> affine ext 256x16)
+	int nBit = _ttoi(argv[0]);
+	if      (nBit == 4) options->bgType = BGGEN_BGTYPE_TEXT_16x16;
+	else if (nBit == 8) options->bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
+	else                PTC_FAIL_IF(1, "Incorrect bit depth specified.\n");
+}
+
+static void PtcSwitch_bt4(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//Set BG type to 4bpp text (16x16)
+	options->bgType = BGGEN_BGTYPE_TEXT_16x16;
+}
+
+static void PtcSwitch_bt8(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//Set BG type to 8bpp text (256x1)
+	options->bgType = BGGEN_BGTYPE_TEXT_256x1;  // BG type
+	options->nPalettes = 1;                     // use only one palette
+}
+
+static void PtcSwitch_ba(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//Set BG type to 8bpp affine (256x1)
+	options->bgType = BGGEN_BGTYPE_AFFINE_256x1;             // BG type
+	options->nPalettes = 1;                                  // use only one palette
+	if (options->nMaxChars > 256) options->nMaxChars = 256;  // adjust default max char count
+}
+
+static void PtcSwitch_bA(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//Set BG type to 8bpp affine extended (256x16)
+	options->bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
+}
+
+static void PtcSwitch_bB(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//Set BG type to 8bpp bitmap (256x1)
+	options->bgType = BGGEN_BGTYPE_BITMAP;  // BG type
+	options->nPalettes = 1;                 // use only one palette
+}
+
+static void PtcSwitch_p(PtcOptions *options, TCHAR **argv) {
+	//set number of palettes
+	options->nPalettes = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_pb(PtcOptions *options, TCHAR **argv) {
+	//set the BG palette base index
+	options->paletteBase = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_po(PtcOptions *options, TCHAR **argv) {
+	//set the BG palette offset
+	options->paletteOffset = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_p0o(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set the BG color-0 mode to used
+	options->bgColor0Use = 1;
+}
+
+static void PtcSwitch_cc(PtcOptions *options, TCHAR **argv) {
+	//set BG max character count
+	options->nMaxChars = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_cn(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//this was a switch that accidentally had an overlaoded meaning.
+	options->nMaxChars = -1;         // BG: disable character compression
+	options->noLimitPaletteSize = 1; // texture: disable 4x4 compression palette limit
+}
+
+static void PtcSwitch_ns(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//disable BG screen data output
+	options->outputScreen = 0;
+}
+
+static void PtcSwitch_se(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//only write BG screen data (no palette/character data output)
+	options->screenExclusive = 1;
+	options->outputScreen = 1;
+}
+
+static void PtcSwitch_cb(PtcOptions *options, TCHAR **argv) {
+	//set the BG character base address
+	options->explicitCharBase = 1;
+	options->charBase = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_wp(PtcOptions *options, TCHAR **argv) {
+	//set the BG palette input file
+	options->srcPalFile = argv[0];
+}
+
+static void PtcSwitch_wc(PtcOptions *options, TCHAR **argv) {
+	//set the bG character input file
+	options->srcChrFile = argv[0];
+}
+
+static void PtcSwitch_pc(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//enable palette compression on the BG (outputs only used palette rows)
+	options->compressPalette = 1;
+}
+
+static void PtcSwitch_f(PtcOptions *options, TCHAR **argv) {
+	const TCHAR *fmtString = argv[0];
+
+	//what format?
+	if      (_tcscmp(fmtString, _T("a3i5"      )) == 0) options->texFmt = CT_A3I5;
+	else if (_tcscmp(fmtString, _T("a5i3"      )) == 0) options->texFmt = CT_A5I3;
+	else if (_tcscmp(fmtString, _T("palette4"  )) == 0) options->texFmt = CT_4COLOR;
+	else if (_tcscmp(fmtString, _T("palette16" )) == 0) options->texFmt = CT_16COLOR;
+	else if (_tcscmp(fmtString, _T("palette256")) == 0) options->texFmt = CT_256COLOR;
+	else if (_tcscmp(fmtString, _T("tex4x4"    )) == 0) options->texFmt = CT_4x4;
+	else if (_tcscmp(fmtString, _T("direct"    )) == 0) options->texFmt = CT_DIRECT;
+	else {
+		//maybe a format number
+		int fid = _ttoi(fmtString);
+		if (fid >= 1 && fid <= 7) options->texFmt = fid;
+		else _tprintf(_T("Unknown texture format ") TC_STR _T(".\n"), fmtString);
+	}
+}
+
+static void PtcSwitch_ct(PtcOptions *options, TCHAR **argv) {
+	//specify the 4x4 palette compression threshold
+	options->tex4x4Threshold = _ttoi(argv[0]);
+}
+
+static void PtcSwitch_fp(PtcOptions *options, TCHAR **argv) {
+	//set the path to the fixed palette file
+	options->fixedPalette = argv[0];
+}
+
+static void PtcSwitch_fpo(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//enables outputting the palette data even when fixed palette is enabled
+	options->outFixedPalette = 1;
+}
+
+static void PtcSwitch_tt(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//enable T-axis trimming of texture data (when height is < power-of-2)
+	options->trimT = 1;
+}
+
+static void PtcSwitch_t0o(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set texture palette color 0 to opaque
+	options->c0xp = 0;
+}
+
+static void PtcSwitch_t0x(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set texture palette color 0 to transparent
+	options->c0xp = 1;
+}
+
+static void PtcSwitch_da(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//enable dithering of the alpha channel
+	options->ditherAlpha = 1;
+}
+
+
+static const PtcSwitch sSwitches[] = {
+	// ----- Global switches
+	{ _T("h"),     0, PtcSwitch_h  },
+	{ _T("s") ,    0, PtcSwitch_s  },
+	{ _T("v") ,    0, PtcSwitch_v  },
+	{ _T("o") ,    1, PtcSwitch_o  },
+	{ _T("k") ,    1, PtcSwitch_k  },
+	{ _T("d") ,    1, PtcSwitch_d  },
+	{ _T("bb"),    1, PtcSwitch_bb },
+	{ _T("bc"),    1, PtcSwitch_bc },
+	{ _T("be"),    0, PtcSwitch_be },
+	{ _T("cm"),    1, PtcSwitch_cm },
+	
+	// ----- Generate mode switches
+	{ _T("gb"),    0, PtcSwitch_gb },
+	{ _T("gt"),    0, PtcSwitch_gt },
+	
+	// ----- Output type switches
+	{ _T("ob"),    0, PtcSwitch_ob },
+	{ _T("oc"),    0, PtcSwitch_oc },
+	{ _T("og"),    0, PtcSwitch_og },
+	{ _T("od"),    0, PtcSwitch_od },
+	{ _T("ot"),    0, PtcSwitch_ot },
+	
+	// ----- Compression switches
+	{ _T("cbios"), 0, PtcSwitch_cbios },
+	{ _T("cno"),   0, PtcSwitch_cno   },
+	{ _T("clz"),   0, PtcSwitch_clz   },
+	{ _T("ch"),    0, PtcSwitch_ch    },
+	{ _T("ch4"),   0, PtcSwitch_ch4   },
+	{ _T("ch8"),   0, PtcSwitch_ch8   },
+	{ _T("crl"),   0, PtcSwitch_crl   },
+	{ _T("clzx"),  0, PtcSwitch_clzx  },
+	{ _T("c8"),    0, PtcSwitch_c8    },
+	
+	// ----- BG switches
+	{ _T("b") ,    1, PtcSwitch_b   },
+	{ _T("bt4"),   0, PtcSwitch_bt4 },
+	{ _T("bt8"),   0, PtcSwitch_bt8 },
+	{ _T("ba"),    0, PtcSwitch_ba  },
+	{ _T("bA"),    0, PtcSwitch_bA  },
+	{ _T("bB"),    0, PtcSwitch_bB  },
+	{ _T("p"),     1, PtcSwitch_p   },
+	{ _T("pb"),    1, PtcSwitch_pb  },
+	{ _T("po"),    1, PtcSwitch_po  },
+	{ _T("p0o"),   0, PtcSwitch_p0o },
+	{ _T("cc"),    1, PtcSwitch_cc  },
+	{ _T("cn"),    0, PtcSwitch_cn  },
+	{ _T("ns"),    0, PtcSwitch_ns  },
+	{ _T("se"),    0, PtcSwitch_se  },
+	{ _T("cb"),    1, PtcSwitch_cb  },
+	{ _T("wp"),    1, PtcSwitch_wp  },
+	{ _T("wc"),    1, PtcSwitch_wc  },
+	{ _T("pc"),    0, PtcSwitch_pc  },
+	
+	// ----- Texture switches
+	{ _T("f"),     1, PtcSwitch_f   },
+	{ _T("ct"),    1, PtcSwitch_ct  },
+	{ _T("fp"),    1, PtcSwitch_fp  },
+	{ _T("fpo"),   0, PtcSwitch_fpo },
+	{ _T("tt"),    0, PtcSwitch_tt  },
+	{ _T("t0o"),   0, PtcSwitch_t0o },
+	{ _T("t0x"),   0, PtcSwitch_t0x },
+	{ _T("da"),    0, PtcSwitch_da  }
+};
+
 static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 	memset(opt, 0, sizeof(*opt));
 	
@@ -772,14 +1208,6 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 		//print help
 		PtcPrintHelpMessage();
 		exit(0);
-	}
-
-	//help?
-	for (int i = 0; i < argc; i++) {
-		if (_tcscmp(argv[i], _T("-h")) == 0) {
-			PtcPrintHelpMessage();
-			exit(0);
-		}
 	}
 	
 	//data output settings
@@ -821,194 +1249,39 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 
 	for (int i = 0; i < argc; i++) {
 		const TCHAR *arg = argv[i];
-
-		if (_tcscmp(arg, _T("-gb")) == 0) {
-			opt->genMode = PTC_GMODE_BG;
-		} else if (_tcscmp(arg, _T("-gt")) == 0) {
-			opt->genMode = PTC_GMODE_TEXTURE;
-		} else if (_tcscmp(arg, _T("-o")) == 0) {
-			i++;
-			if (i < argc) opt->outBase = argv[i];
-		} else if (_tcscmp(arg, _T("-ob")) == 0) {
-			opt->outMode = PTC_OUT_MODE_BINARY;
-		} else if (_tcscmp(arg, _T("-oc")) == 0) {
-			opt->outMode = PTC_OUT_MODE_C;
-		} else if (_tcscmp(arg, _T("-og")) == 0) {
-			opt->outMode = PTC_OUT_MODE_GRF;
-		} else if (_tcscmp(arg, _T("-k")) == 0) {
-			opt->useAlphaKey = 1;
-			i++;
-			if (i < argc) opt->alphaKey = PtcParseHexColor24(argv[i]);
-		} else if (_tcscmp(arg, _T("-d")) == 0) {
-			i++;
-			if (i < argc) opt->diffuse = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-cm")) == 0) {
-			i++;
-			if (i < argc) opt->nMaxColors = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-s")) == 0) {
-			opt->silent = 1;
-		} else if (_tcscmp(arg, _T("-v")) == 0) {
-			opt->silent = 0;
-		} else if (_tcscmp(arg, _T("-bb")) == 0) {
-			i++;
-			if (i < argc) opt->balance.balance = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-bc")) == 0) {
-			i++;
-			if (i < argc) opt->balance.colorBalance = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-be")) == 0) {
-			opt->balance.enhanceColors = 1;
-		}
-
-		//BG option
-		else if (_tcscmp(arg, _T("-b")) == 0) {
-			//LEGACY: bit depth select (4bpp -> text 16x16, 8bpp -> affine ext 256x16)
-			if (i < argc) {
-				int nBit = _ttoi(argv[++i]);
-				if (nBit == 4)      opt->bgType = BGGEN_BGTYPE_TEXT_16x16;
-				else if (nBit == 8) opt->bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
-				else PTC_FAIL_IF(1, "Incorrect bit depth specified.\n");
-			}
-		} else if (_tcscmp(arg, _T("-bt4")) == 0) {
-			//BG generate in text 16x16 mode
-			opt->bgType = BGGEN_BGTYPE_TEXT_16x16;
-		} else if (_tcscmp(arg, _T("-bt8")) == 0) {
-			//BG generate in text 256x1 mode
-			opt->bgType = BGGEN_BGTYPE_TEXT_256x1;   // set BG type
-			opt->nPalettes = 1;                      // use only one palette
-		} else if (_tcscmp(arg, _T("-ba")) == 0) {
-			//BG generate in affine mode
-			opt->bgType = BGGEN_BGTYPE_AFFINE_256x1;        // set BG type
-			opt->nPalettes = 1;                             // use only one palette
-			if (opt->nMaxChars > 256) opt->nMaxChars = 256; // adjust default max char count
-		} else if (_tcscmp(arg, _T("-bA")) == 0) {
-			//BG generate in affine EXT mode
-			opt->bgType = BGGEN_BGTYPE_AFFINEEXT_256x16; // set BG type
-		} else if (_tcscmp(arg, _T("-bB")) == 0) {
-			//BG generate in bitmap mode
-			opt->bgType = BGGEN_BGTYPE_BITMAP; // set BG type
-			opt->nPalettes = 1;                // use only one palette
-		} else if (_tcscmp(arg, _T("-p")) == 0) {
-			i++;
-			if (i < argc) opt->nPalettes = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-pb")) == 0) {
-			i++;
-			if (i < argc) opt->paletteBase = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-p0o")) == 0) {
-			//Use BG color 0
-			opt->bgColor0Use = 1;
-		} else if (_tcscmp(arg, _T("-cc")) == 0) {
-			i++;
-			if (i < argc) opt->nMaxChars = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-cn")) == 0) {
-			opt->nMaxChars = -1;
-			opt->noLimitPaletteSize = 1; //for texture
-		} else if (_tcscmp(arg, _T("-ns")) == 0) {
-			opt->outputScreen = 0;
-		} else if (_tcscmp(arg, _T("-od")) == 0) {
-			opt->outMode = PTC_OUT_MODE_DIB;
-		} else if (_tcscmp(arg, _T("-cb")) == 0) {
-			opt->explicitCharBase = 1;
-			i++;
-			if (i < argc) opt->charBase = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-wp")) == 0) {
-			i++;
-			if (i < argc) opt->srcPalFile = argv[i];
-		} else if (_tcscmp(arg, _T("-wc")) == 0) {
-			i++;
-			if (i < argc) opt->srcChrFile = argv[i];
-		} else if (_tcscmp(arg, _T("-pc")) == 0) {
-			opt->compressPalette = 1;
-		} else if (_tcscmp(arg, _T("-po")) == 0) {
-			i++;
-			if (i < argc) opt->paletteOffset = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-se")) == 0) {
-			opt->screenExclusive = 1;
-			opt->outputScreen = 1;
-		}
-
-		//Texture option
-		else if (_tcscmp(arg, _T("-f")) == 0) {
-			i++;
-			if (i < argc) {
-				const TCHAR *fmtString = argv[i];
-
-				//what format?
-				if      (_tcscmp(fmtString, _T("a3i5"      )) == 0) opt->texFmt = CT_A3I5;
-				else if (_tcscmp(fmtString, _T("a5i3"      )) == 0) opt->texFmt = CT_A5I3;
-				else if (_tcscmp(fmtString, _T("palette4"  )) == 0) opt->texFmt = CT_4COLOR;
-				else if (_tcscmp(fmtString, _T("palette16" )) == 0) opt->texFmt = CT_16COLOR;
-				else if (_tcscmp(fmtString, _T("palette256")) == 0) opt->texFmt = CT_256COLOR;
-				else if (_tcscmp(fmtString, _T("tex4x4"    )) == 0) opt->texFmt = CT_4x4;
-				else if (_tcscmp(fmtString, _T("direct"    )) == 0) opt->texFmt = CT_DIRECT;
-				else {
-					//maybe a format number
-					int fid = _ttoi(fmtString);
-					if (fid >= 1 && fid <= 7) opt->texFmt = fid;
-					else _tprintf(_T("Unknown texture format ") TC_STR _T(".\n"), fmtString);
+		
+		//process arguments
+		if (arg[0] == _T('-')) {
+			//process switch
+			
+			const PtcSwitch *sw = NULL;
+			for (unsigned int j = 0; j < sizeof(sSwitches) / sizeof(sSwitches[0]); j++) {
+				if (_tcscmp(arg + 1, sSwitches[j].switchName) == 0) {
+					sw = &sSwitches[j];
+					break;
 				}
 			}
-		} else if (_tcscmp(arg, _T("-fp")) == 0) {
-			i++;
-			if (i < argc) opt->fixedPalette = argv[i];
-		} else if (_tcscmp(arg, _T("-fpo")) == 0) {
-			opt->outFixedPalette = 1;
-		} else if (_tcscmp(arg, _T("-ot")) == 0) {
-			opt->outMode = PTC_OUT_MODE_NNSTGA;
-		} else if (_tcscmp(arg, _T("-ct")) == 0) {
-			i++;
-			if (i < argc) opt->tex4x4Threshold = _ttoi(argv[i]);
-		} else if (_tcscmp(arg, _T("-tt")) == 0) {
-			opt->trimT = 1;
-		} else if (_tcscmp(arg, _T("-t0o")) == 0) {
-			//color 0 is not transparent
-			opt->c0xp = 0;
-		} else if (_tcscmp(arg, _T("-t0x")) == 0) {
-			//color 0 is transparent
-			opt->c0xp = 1;
-		} else if (_tcscmp(arg, _T("-da")) == 0) {
-			//dither alpha
-			opt->ditherAlpha = 1;
-		}
-		
-		//compression switch
-		else if (_tcscmp(arg, _T("-cbios")) == 0) {
-			//allow all BIOS compression types
-			opt->compressionPolicy |= CX_COMPRESSION_LZ | CX_COMPRESSION_RLE | CX_COMPRESSION_HUFFMAN4 | CX_COMPRESSION_HUFFMAN8;
-		} else if (_tcscmp(arg, _T("-cno")) == 0) {
-			//allow compression to use dummy compression
-			opt->compressionPolicy |= CX_COMPRESSION_NONE;
-		} else if (_tcscmp(arg, _T("-clz")) == 0) {
-			//allow compression to use LZ compression
-			opt->compressionPolicy |= CX_COMPRESSION_LZ;
-		} else if (_tcscmp(arg, _T("-ch")) == 0) {
-			//allow compression to use either 4-bit or 8-bit Huffman compression
-			opt->compressionPolicy |= CX_COMPRESSION_HUFFMAN4 | CX_COMPRESSION_HUFFMAN8;
-		} else if (_tcscmp(arg, _T("-ch4")) == 0) {
-			//allow compression to use 4-bit Huffman compression
-			opt->compressionPolicy |= CX_COMPRESSION_HUFFMAN4;
-		} else if (_tcscmp(arg, _T("-ch8")) == 0) {
-			//allow compression to use 8-bit Huffman compression
-			opt->compressionPolicy |= CX_COMPRESSION_HUFFMAN8;
-		} else if (_tcscmp(arg, _T("-crl")) == 0) {
-			//allow compression to use RLE compression
-			opt->compressionPolicy |= CX_COMPRESSION_RLE;
-		} else if (_tcscmp(arg, _T("-clzx")) == 0) {
-			//allow compression to use LZ extended compression
-			opt->compressionPolicy |= CX_COMPRESSION_LZX;
-		} else if (_tcscmp(arg, _T("-c8")) == 0) {
-			//allow compression to use VRAM unsafe compression
-			opt->compressionPolicy &= ~CX_COMPRESSION_VRAM_SAFE;
-		}
-		
-		else if (arg[0] != _T('-')) { // not a switch
+			
+			if (sw != NULL) {
+				//call switch
+				int nArgsRequired = sw->nArguments;
+				int nArgsLeft = argc - (i + 1);
+				
+				PTC_FAIL_IF(nArgsLeft < nArgsRequired, "Too few arguments to switch.\n");
+				sw->proc(opt, &argv[i + 1]);
+				
+				//increment i
+				i += nArgsRequired;
+			} else {
+				//unknown switch
+				_tprintf(_T("Ignoring unknown switch ") TC_STR _T(".\n"), arg);
+			}
+			
+		} else {
+			//add input file
 			PTC_FAIL_IF(opt->nSrcFile >= PTC_INFILE_MAX, "Too many input files.\n");
 			
 			opt->srcFiles[opt->nSrcFile++] = arg;
-		}
-
-		//unknown switch
-		else {
-			_tprintf(_T("Ignoring unknown switch ") TC_STR _T(".\n"), arg);
 		}
 	}
 }
