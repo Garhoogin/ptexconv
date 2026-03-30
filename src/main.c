@@ -136,7 +136,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.6.0.0"
+#define VERSION "1.6.0.1"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -1454,9 +1454,7 @@ int _tmain(int argc, TCHAR **argv) {
 		if (!opt.screenExclusive) {
 			//from scratch
 			BgGenerateParameters params = { 0 };
-			params.balance.balance = opt.balance.balance;
-			params.balance.colorBalance = opt.balance.colorBalance;
-			params.balance.enhanceColors = opt.balance.enhanceColors;
+			memcpy(&params.balance, &opt.balance, sizeof(opt.balance));
 
 			params.compressPalette = opt.compressPalette;
 			params.paletteRegion.base = opt.paletteBase;
@@ -1804,7 +1802,6 @@ int _tmain(int argc, TCHAR **argv) {
 			params.diffuseAmount = (float) opt.diffuse / 100.0f;
 			params.dither = !!opt.diffuse;
 			params.ditherAlpha = params.dither && opt.ditherAlpha && (opt.texFmt == CT_A3I5 || opt.texFmt == CT_A5I3);
-			params.useFixedPalette = opt.fixedPalette != NULL;
 			params.fixedPalette = NULL;
 			params.fmt = opt.texFmt;
 			params.width = width;
@@ -1812,9 +1809,7 @@ int _tmain(int argc, TCHAR **argv) {
 			params.px = images[0].px;
 			params.c0xp = opt.c0xp;
 			params.threshold = opt.tex4x4Threshold;
-			params.balance = opt.balance.balance;
-			params.colorBalance = opt.balance.colorBalance;
-			params.enhanceColors = opt.balance.enhanceColors;
+			memcpy(&params.balance, &opt.balance, sizeof(opt.balance));
 			params.pnam = (char *) calloc(1, 1);
 			
 			//read the fixed palette file, if one was specified
@@ -1845,7 +1840,7 @@ int _tmain(int argc, TCHAR **argv) {
 			
 			float diffuse = (float) opt.diffuse / 100.0f;
 			
-			RxReduction *reduction = RxNew(opt.balance.balance, opt.balance.colorBalance, opt.balance.enhanceColors);
+			RxReduction *reduction = RxNew(&opt.balance);
 			RxSetPaletteLayers(reduction, opt.nSrcFile);
 			RxApplyFlags(reduction, flag);
 			
