@@ -1857,7 +1857,8 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 			
 			int *indices = (int *) calloc(width * height, sizeof(int));
-			RxReduceImageWithContext(reduction, px, indices, width, height, pltt, opt.nMaxColors, flag, diffuse);
+			RxPaletteLoad(reduction, pltt, opt.nMaxColors);
+			RxReduceImage(reduction, px, indices, width, height, flag, diffuse);
 			RxFree(reduction);
 			
 			//create the texel data

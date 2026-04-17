@@ -546,8 +546,8 @@ int BgPerformCharacterCompression(
 		//now, match colors to indices.
 		const COLOR32 *pal = palette + (bestPalette << nBits);
 		int idxs[64];
-		RxReduceImageWithContext(reduction, tile->px, idxs, 8, 8, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset,
-			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER, 0.0f);
+		RxPaletteLoad(reduction, pal + paletteOffset - !!paletteOffset, paletteSize + !!paletteOffset);
+		RxReduceImage(reduction, tile->px, idxs, 8, 8, RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER, 0.0f);
 		for (unsigned int j = 0; j < 64; j++) {
 			tile->indices[j] = idxs[j] == 0 ? 0 : (idxs[j] + paletteOffset - !!paletteOffset);
 			tile->px[j] = tile->indices[j] ? (pal[tile->indices[j]] | 0xFF000000) : 0;
@@ -625,8 +625,8 @@ void BgSetupTiles(
 		//(we will always have space for this). Reduction producing a color index 0 will be taken to be
 		//transparent.
 		int idxs[64];
-		RxReduceImageWithContext(reduction, tile->px, idxs, 8, 8, pal + effectivePaletteOffset - 1, effectivePaletteSize + 1,
-			RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER, diffuse);
+		RxPaletteLoad(reduction, pal + effectivePaletteOffset - 1, effectivePaletteSize + 1);
+		RxReduceImage(reduction, tile->px, idxs, 8, 8, RX_FLAG_ALPHA_MODE_RESERVE | RX_FLAG_PRESERVE_ALPHA | RX_FLAG_NO_ALPHA_DITHER, diffuse);
 		for (int j = 0; j < 64; j++) {
 			//YIQ color
 			RxConvertRgbToYiq(tile->px[j], &tile->pxYiq[j]);
@@ -751,7 +751,7 @@ void BgGenerate(
 	//create color palettes for the background.
 	if (nPalettes == 1) {
 		RxFlag flag = RX_FLAG_SORT_ALL | RX_FLAG_ALPHA_MODE_NONE;
-		RxCreatePalette(imgBits, width, height, palette + (paletteBase << nBits) + usedPaletteOffset,
+		RxGlbCreatePalette(imgBits, width, height, palette + (paletteBase << nBits) + usedPaletteOffset,
 			usedPaletteSize, &params->balance, flag, NULL);
 	} else {
 		RxCreateMultiplePalettes(imgBits, tilesX, tilesY, palette, paletteBase, nPalettes, 1 << nBits,
