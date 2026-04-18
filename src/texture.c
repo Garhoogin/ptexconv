@@ -52,14 +52,14 @@ const char *TxNameFromTexFormat(int fmt) {
 	return fmts[fmt];
 }
 
-static COLOR32 TxiBlend(COLOR32 c1, COLOR32 c2, int factor) {
-	unsigned int r = ((c1 >> 0) & 0xFF) * (8 - factor) + ((c2 >> 0) & 0xFF) * factor;
-	unsigned int g = ((c1 >> 8) & 0xFF) * (8 - factor) + ((c2 >> 8) & 0xFF) * factor;
+static COLOR32 TxiBlend(COLOR32 c1, COLOR32 c2, unsigned int factor) {
+	unsigned int r = ((c1 >>  0) & 0xFF) * (8 - factor) + ((c2 >>  0) & 0xFF) * factor;
+	unsigned int g = ((c1 >>  8) & 0xFF) * (8 - factor) + ((c2 >>  8) & 0xFF) * factor;
 	unsigned int b = ((c1 >> 16) & 0xFF) * (8 - factor) + ((c2 >> 16) & 0xFF) * factor;
 	r = (r + 4) / 8;
 	g = (g + 4) / 8;
 	b = (b + 4) / 8;
-	return ColorRoundToDS18(r | (g << 8) | (b << 16));
+	return ColorRoundToDS18(r | (g << 8) | (b << 16)) | 0xFF000000;
 }
 
 static COLOR32 TxiSamplePltt(const COLOR *pltt, unsigned int nPltt, unsigned int i) {
