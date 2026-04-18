@@ -271,10 +271,18 @@ static COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHei
 #else //_MSC_VER
 	int channels;
 	FILE *fp = _tfopen(lpszFileName, _T("rb"));
-	COLOR32 *px = (COLOR32 *) stbi_load_from_file(fp, pWidth, pHeight, &channels, 4);
-	fclose(fp);
-
-	return px;
+	if (fp != NULL) {
+		//open succeed
+		COLOR32 *px = (COLOR32 *) stbi_load_from_file(fp, pWidth, pHeight, &channels, 4);
+		fclose(fp);
+	
+		return px;
+	} else {
+		//file access error
+		*pWidth = 0;
+		*pHeight = 0;
+		return NULL;
+	}
 #endif
 
 }
