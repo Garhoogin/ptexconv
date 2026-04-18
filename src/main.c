@@ -730,12 +730,23 @@ static void *PtcReadFile(const TCHAR *path, int *pSize) {
 	size = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 	
-	void *buf = malloc(size + 1);
+	unsigned char *buf = malloc(size + 1);
 	if (buf == NULL) {
 		*pSize = 0;
 	} else {
-		fread(buf, size, 1, fp);
 		*pSize = (int) size;
+		
+		unsigned int pos = 0;
+		while (pos < size) {
+			unsigned int nRead = fread(buf + pos, 1, size - pos, fp);
+			if (nRead == 0) {
+				//put file access error
+				_ftprintf(stderr, _T("File read error on '") TC_STR _T("'.\n"), path);
+				exit(1);
+			}
+			
+			pos += nRead;
+		}
 	}
 	
 	fclose(fp);
