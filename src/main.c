@@ -10,6 +10,8 @@
 #include "bggen.h"
 #include "grf.h"
 #include "gdip.h"
+#include "bstream.h"
+#include "nns.h"
 
 //ensure TCHAR and related macros are defined
 #ifdef _WIN32
@@ -61,7 +63,8 @@ typedef enum PtcOutputMode_ {
 	PTC_OUT_MODE_C,       // Data output is a C source and header file pair
 	PTC_OUT_MODE_DIB,     // Data output is a DIB file
 	PTC_OUT_MODE_NNSTGA,  // Data output is an NNS TGA file
-	PTC_OUT_MODE_GRF      // Data output is a GRF file
+	PTC_OUT_MODE_GRF,     // Data output is a GRF file
+	PTC_OUT_MODE_NNS      // Data output is NNS binary data (TODO: merge with NNSTGA?)
 } PtcOutputMode;
 
 typedef struct PtcOptions_ {
@@ -178,6 +181,7 @@ static const char *g_helpString = ""
 	"   -ns     Do not output screen data\n"
 	"   -se     Output screen only. Requires -wp and -wc (will not modify).\n"
 	"   -od     Output as DIB (disables character compression)\n"
+	"   -onns   Output as NNS binary data\n"
 	"\n"
 	"Texture Options:\n"
 	"   -f  <f> Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
@@ -612,6 +616,138 @@ static int PtcEmitBinaryData(FILE *fp, const void *buf, size_t len, CxCompressio
 	return status;
 }
 
+static void PtcWriteNclr(FILE *fp, const COLOR *pltt, unsigned int nCols, unsigned int charDepth, int bgFmt, int compressPalette, unsigned int plttBase) {
+	NnsStream nns;
+	NnsStreamCreate(&nns, "NCLR", 1, 0, NNS_TYPE_G2D, NNS_SIG_LE);
+	
+	unsigned char plttHeader[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0, 0, 0 };
+	unsigned char pcmpHeader[] = { 0, 0, 0xEF, 0xBE, 8, 0, 0, 0 };
+
+	//fill PLTT header
+	*(uint32_t *) (plttHeader + 0x00) = (charDepth == 8) ? CT_256COLOR : CT_16COLOR;
+	*(uint32_t *) (plttHeader + 0x04) = (bgFmt == BGGEN_BGTYPE_AFFINEEXT_256x16);
+	*(uint32_t *) (plttHeader + 0x08) = nCols * sizeof(COLOR);
+
+	NnsStreamStartBlock(&nns, "PLTT");
+	NnsStreamWrite(&nns, plttHeader, sizeof(plttHeader));
+	NnsStreamWrite(&nns, pltt, nCols * sizeof(COLOR));
+	NnsStreamEndBlock(&nns);
+
+	//was the compressed palette enabled?
+	if (compressPalette) {
+		NnsStreamStartBlock(&nns, "PCMP");
+		
+		unsigned int nPltt = nCols >> charDepth;
+
+		//write PCMP data
+		*(uint16_t *) (pcmpHeader + 0x00) = nPltt;
+		NnsStreamWrite(&nns, pcmpHeader, sizeof(pcmpHeader));
+
+		for (unsigned int i = 0; i < nPltt; i++) {
+			uint16_t j = i + (uint16_t) (plttBase >> charDepth);
+			NnsStreamWrite(&nns, &j, sizeof(j));
+		}
+
+		NnsStreamEndBlock(&nns);
+	}
+	
+	NnsStreamFinalize(&nns);
+	
+	//get data out
+	BSTREAM stm;
+	bstreamCreate(&stm, NULL, 0);
+	NnsStreamFlushOut(&nns, &stm);
+	NnsStreamFree(&nns);
+
+	fwrite(stm.buffer, stm.size, 1, fp);
+	bstreamFree(&stm);
+}
+
+static void PtcWriteNcgr(FILE *fp, const unsigned char *charData, unsigned int charSize, unsigned int charsX, unsigned int charsY, unsigned int charDepth, int bitmap, int compressCharacter) {
+	NnsStream nns;
+	NnsStreamCreate(&nns, "NCGR", 1, 0, NNS_TYPE_G2D, NNS_SIG_LE);
+
+	NnsStreamStartBlock(&nns, "CHAR");
+
+	if (!bitmap && compressCharacter) {
+		charsX = 0xFFFF;
+		charsY = 0xFFFF;
+	}
+
+	unsigned char charHeader[0x18] = { 0 };
+	*(uint16_t *) (charHeader + 0x00) = charsX;
+	*(uint16_t *) (charHeader + 0x02) = charsY;
+	*(uint32_t *) (charHeader + 0x04) = (charDepth == 8) ? CT_256COLOR : CT_16COLOR;
+	*(uint32_t *) (charHeader + 0x08) = 0x000010; // 1D 32K
+	*(uint32_t *) (charHeader + 0x0C) = bitmap ? 1 : 0;
+	*(uint32_t *) (charHeader + 0x10) = charSize;
+	*(uint32_t *) (charHeader + 0x14) = sizeof(charHeader);
+	NnsStreamWrite(&nns, charHeader, sizeof(charHeader));
+	NnsStreamWrite(&nns, charData, charSize);
+
+	NnsStreamEndBlock(&nns);
+	NnsStreamFinalize(&nns);
+	
+	//get data out
+	BSTREAM stm;
+	bstreamCreate(&stm, NULL, 0);
+	NnsStreamFlushOut(&nns, &stm);
+	NnsStreamFree(&nns);
+
+	//write to file
+	fwrite(stm.buffer, stm.size, 1, fp);
+	bstreamFree(&stm);
+}
+
+static void PtcWriteNscr(FILE *fp, const void *scrData, unsigned int scrSize, int bgType, unsigned int tilesX, unsigned int tilesY) {
+	NnsStream nns;
+	NnsStreamCreate(&nns, "NSCR", 1, 0, NNS_TYPE_G2D, NNS_SIG_LE);
+
+	uint16_t colorMode = 0, screenFormat = 0;
+	switch (bgType) {
+		case BGGEN_BGTYPE_TEXT_16x16:
+			screenFormat = SCREENFORMAT_TEXT;
+			colorMode = SCREENCOLORMODE_16x16;
+			break;
+		case BGGEN_BGTYPE_TEXT_256x1:
+			screenFormat = SCREENFORMAT_TEXT;
+			colorMode = SCREENCOLORMODE_256x1;
+			break;
+		case BGGEN_BGTYPE_AFFINE_256x1:
+			screenFormat = SCREENFORMAT_AFFINE;
+			colorMode = SCREENCOLORMODE_256x1;
+			break;
+		case BGGEN_BGTYPE_AFFINEEXT_256x16:
+			screenFormat = SCREENFORMAT_AFFINEEXT;
+			colorMode = SCREENCOLORMODE_256x16;
+			break;
+	}
+
+	unsigned char scrnHeader[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	*(uint16_t *) (scrnHeader + 0x00) = tilesX * 8;
+	*(uint16_t *) (scrnHeader + 0x02) = tilesY * 8;
+	*(uint16_t *) (scrnHeader + 0x04) = colorMode;
+	*(uint16_t *) (scrnHeader + 0x06) = screenFormat;
+	*(uint32_t *) (scrnHeader + 0x08) = scrSize;
+
+	NnsStreamStartBlock(&nns, "SCRN");
+	NnsStreamWrite(&nns, scrnHeader, sizeof(scrnHeader));
+	NnsStreamWrite(&nns, scrData, scrSize);
+	NnsStreamEndBlock(&nns);
+
+	NnsStreamFinalize(&nns);
+	
+	//get data out
+	BSTREAM stm;
+	bstreamCreate(&stm, NULL, 0);
+	NnsStreamFlushOut(&nns, &stm);
+	NnsStreamFree(&nns);
+
+	//write to file
+	fwrite(stm.buffer, stm.size, 1, fp);
+	bstreamFree(&stm);
+}
+
 static int PtcEmitTextData(FILE *fp, FILE *fpHeader, const char *prefix, const char *name, const char *suffix, const void *buf, size_t len, unsigned int unit, CxCompressionPolicy compression) {
 	unsigned int complen;
 	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
@@ -894,6 +1030,13 @@ static void PtcSwitch_od(PtcOptions *options, TCHAR **argv) {
 	options->outMode = PTC_OUT_MODE_DIB;
 }
 
+static void PtcSwitch_onns(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set output type to NNS binary
+	options->outMode = PTC_OUT_MODE_NNS;
+}
+
 static void PtcSwitch_ot(PtcOptions *options, TCHAR **argv) {
 	(void) argv;
 	
@@ -1171,11 +1314,12 @@ static const PtcSwitch sSwitches[] = {
 	{ _T("gt"),    0, PtcSwitch_gt },
 	
 	// ----- Output type switches
-	{ _T("ob"),    0, PtcSwitch_ob },
-	{ _T("oc"),    0, PtcSwitch_oc },
-	{ _T("og"),    0, PtcSwitch_og },
-	{ _T("od"),    0, PtcSwitch_od },
-	{ _T("ot"),    0, PtcSwitch_ot },
+	{ _T("ob"),    0, PtcSwitch_ob   },
+	{ _T("oc"),    0, PtcSwitch_oc   },
+	{ _T("og"),    0, PtcSwitch_og   },
+	{ _T("od"),    0, PtcSwitch_od   },
+	{ _T("onns"),  0, PtcSwitch_onns },
+	{ _T("ot"),    0, PtcSwitch_ot   },
 	
 	// ----- Compression switches
 	{ _T("cbios"), 0, PtcSwitch_cbios },
@@ -1584,6 +1728,38 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			free(nameBuffer);
+
+		} else if (opt.outMode == PTC_OUT_MODE_NNS) { // output NNS binary file
+		
+			TCHAR *pathNclr = PtcSuffixFileName(opt.outBase, _T(".nclr"));
+			TCHAR *pathNcgr = PtcSuffixFileName(opt.outBase, bitmap ? _T(".ncbr") : _T(".ncgr"));
+			TCHAR *pathNscr = PtcSuffixFileName(opt.outBase, _T(".nscr"));
+
+			FILE *fp;
+			
+			if (!opt.screenExclusive) {
+				fp = _tfopen(pathNclr, _T("wb"));
+				PtcWriteNclr(fp, pal + paletteOutBase, paletteOutSize, depth, opt.bgType, opt.compressPalette, paletteOutBase);
+				fclose(fp);
+				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pathNclr);
+
+				fp = _tfopen(pathNcgr, _T("wb"));
+				PtcWriteNcgr(fp, chars, charSize, images[0].width / 8, images[0].height / 8, depth, bitmap, opt.nMaxChars != -1);
+				fclose(fp);
+				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pathNcgr);
+
+			}
+
+			if (opt.outputScreen) {
+				fp = _tfopen(pathNscr, _T("wb"));
+				PtcWriteNscr(fp, screen, screenSize, opt.bgType, images[0].width / 8, images[0].height / 8);
+				fclose(fp);
+				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pathNscr);
+			}
+
+			free(pathNclr);
+			free(pathNcgr);
+			free(pathNscr);
 
 		} else if (opt.outMode == PTC_OUT_MODE_DIB) { // output DIB file
 			//we physically cannot cram this many colors into a DIB palette
