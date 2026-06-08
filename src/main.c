@@ -1380,11 +1380,11 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 	opt->compressionPolicy = CX_COMPRESSION_VRAM_SAFE;  // default compression (none explicit, VRAM safety required)
 	
 	//color conversion options
-	opt->balance.balance       = BALANCE_DEFAULT; // default lightness-color balance setting
-	opt->balance.colorBalance  = BALANCE_DEFAULT; // default color balance setting (neutral)
-	opt->balance.enhanceColors = 0;               // enhance largely used colors
-	opt->diffuse = 0;                             // default error diffusion amount (0%)
-	opt->ditherAlpha = 0;                         // dither the alpha channel?
+	opt->balance.balance       = RX_BALANCE_DEFAULT;       // default lightness-color balance setting
+	opt->balance.colorBalance  = RX_COLORBALANCE_DEFAULT;  // default color balance setting (neutral)
+	opt->balance.enhanceColors = RX_FALSE;                 // enhance largely used colors
+	opt->diffuse = 0;                                      // default error diffusion amount (0%)
+	opt->ditherAlpha = 0;                                  // dither the alpha channel?
 	
 	//begin processing arguments. First, determine global settings and conversion mode.
 	opt->nMaxColors = -1;                // default. 256 for BG, automatic for texture
