@@ -24,6 +24,7 @@
 #   define _tcscmp strcmp
 #   define _tprintf printf
 #   define _ftprintf fprintf
+#   define _vftprintf vfprintf
 #   define _tcslen strlen
 #   define _tcsdup strdup
 #   define _tcsrchr strrchr
@@ -33,11 +34,18 @@
 //MinGW's wprintf is defective. Account for this here.
 #ifdef _MSC_VER
 #   define TC_STR _T("%s")
+#   ifdef _UNICODE
+#       define MB_STR _T("%S")
+#   else // _UNICODE
+#       define MB_STR _T("%s")
+#   endif
 #else //_MSC_VER
 #ifdef _UNICODE
 #   define TC_STR _T("%ls")
+#   define MB_STR _T("%s")
 #else //_UNICODE
 #   define TC_STR _T("%s")
+#   define MB_STR _T("%s")
 #endif
 #endif //_MSC_VER
 
@@ -74,9 +82,6 @@ typedef struct PtcOptions_ {
 	CxCompressionPolicy compressionPolicy;
 	RxBalanceSetting balance;
 	int outFixedPalette;
-	
-	//command line control
-	int silent;
 	
 	int useAlphaKey;
 	COLOR32 alphaKey;
@@ -211,11 +216,12 @@ static const char *g_helpString = ""
 static const char *texHeader = ""
 	"///////////////////////////////////////\n"
 	"// \n"
-	"// %s\n"
+	"// NAME: %s\n"
+	"// \n"
 	"// Generated %d/%d/%d %d:%02d %cM\n"
-	"// Format: %s\n"
-	"// Colors: %d\n"
-	"// Size: %dx%d\n"
+	"// FORMAT  : %s\n"
+	"// PALETTE : %d colors\n"
+	"// SIZE    : %dx%d\n"
 	"// \n"
 	"///////////////////////////////////////\n\n"
 "";
@@ -223,15 +229,77 @@ static const char *texHeader = ""
 static const char *bgHeader = ""
 	"///////////////////////////////////////\n"
 	"// \n"
-	"// %s\n"
+	"// NAME: %s\n"
+	"// \n"
 	"// Generated %d/%d/%d %d:%02d %cM\n"
-	"// Format: %s (%dbpp)\n"
-	"// Palettes: %d\n"
-	"// Palette base: %d\n"
-	"// Size: %dx%d\n"
+	"// FORMAT  : %s (%dbpp)\n"
+	"// PALETTE : %d palettes (base %d)\n"
+	"// SIZE    : %dx%d\n"
 	"// \n"
 	"///////////////////////////////////////\n\n"
 "";
+
+// log level
+typedef enum PtcLevel_ {
+	PTC_LEVEL_INFO   = (1<<0),  // information message (stdout)
+	PTC_LEVEL_WARN   = (1<<1),  // warning message (stderr)
+	PTC_LEVEL_ERROR  = (1<<2),  // error message (stderr)
+	PTC_LEVEL_STOP   = (1<<3)   // error message (stderr), halts
+} PtcLevel;
+
+//default log level: all but info messages
+static PtcLevel sLogLevel = PTC_LEVEL_WARN | PTC_LEVEL_ERROR | PTC_LEVEL_STOP;
+
+static void PtcPrint(PtcLevel level, const TCHAR *msg, ...) {
+	if (!(sLogLevel & level)) {
+		//filter excludes message, but stop message must still stop
+		if (level == PTC_LEVEL_STOP) exit(1);
+		return;
+	}
+
+	FILE *fp = stdout;
+	switch (level) {
+		case PTC_LEVEL_INFO:
+			fp = stdout;
+			break;
+		case PTC_LEVEL_WARN:
+			fp = stderr;
+			fprintf(stderr, "ptexconv warning: ");
+			break;
+		case PTC_LEVEL_ERROR:
+		case PTC_LEVEL_STOP:
+			fp = stderr;
+			fprintf(stderr, "ptexconv error: ");
+			break;
+	}
+
+	//print
+	va_list vargs;
+	va_start(vargs, msg);
+	_vftprintf(fp, msg, vargs);
+	va_end(vargs);
+
+	//exit if necessary
+	if (level == PTC_LEVEL_STOP) exit(1);
+}
+
+#define PTC_FAIL_IF(cond,...)  if (cond) { \
+	PtcPrint(PTC_LEVEL_STOP, __VA_ARGS__); \
+}
+
+static FILE *PtcOpenFileForWrite(const TCHAR *path) {
+	FILE *fp = _tfopen(path, _T("wb"));
+	PTC_FAIL_IF(fp == NULL, _T("Could not open file '") TC_STR _T("' for write access.\n"), path);
+
+	return fp;
+}
+
+static FILE *PtcOpenFileForRead(const TCHAR *path) {
+	FILE *fp = _tfopen(path, _T("rb"));
+	PTC_FAIL_IF(fp == NULL, _T("Could not open file '") TC_STR _T("' for read access.\n"), path);	
+
+	return fp;
+}
 
 static void PtcGetDateTime(int *month, int *day, int *year, int *hour, int *minute, int *am) {
 
@@ -274,7 +342,7 @@ static COLOR32 *tgdipReadImage(const TCHAR *lpszFileName, int *pWidth, int *pHei
 
 #else //_MSC_VER
 	int channels;
-	FILE *fp = _tfopen(lpszFileName, _T("rb"));
+	FILE *fp = PtcOpenFileForRead(lpszFileName);
 	if (fp != NULL) {
 		//open succeed
 		COLOR32 *px = (COLOR32 *) stbi_load_from_file(fp, pWidth, pHeight, &channels, 4);
@@ -361,8 +429,8 @@ static void PtcWriteNnsTgaSection(FILE *fp, const char *section, const void *dat
 	if (length > 0) fwrite(data, length, 1, fp);
 }
 
-void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
-	FILE *fp = _tfopen(name, _T("wb"));
+void PtcWriteNnsTga(const TCHAR *name, TEXELS *texels, PALETTE *palette) {
+	FILE *fp = PtcOpenFileForWrite(name);
 
 	int width = TEXW(texels->texImageParam);
 	int height = TEXH(texels->texImageParam);
@@ -417,7 +485,7 @@ void PtcWriteNnsTga(TCHAR *name, TEXELS *texels, PALETTE *palette) {
 }
 
 void PtcWriteBitmap(COLOR32 *palette, unsigned int paletteSize, int *indices, int width, int height, const TCHAR *path) {
-	FILE *fp = _tfopen(path, _T("wb"));
+	FILE *fp = PtcOpenFileForWrite(path);
 
 	unsigned char header[] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	unsigned char infoHeader[] = {
@@ -566,6 +634,10 @@ static TCHAR *PtcGetFileName(const TCHAR *path) {
 
 // ----- file output routines
 
+static void PtcPrintFileWritten(const TCHAR *path) {
+	PtcPrint(PTC_LEVEL_INFO, _T("Wrote ") TC_STR _T("\n"), path);
+}
+
 static void *PtcCompressByPolicy(const void *ptr, unsigned int size, unsigned int *compressedSize, CxCompressionPolicy policy) {
 	//if policy has no compression bits set, return a copy of the buffer.
 	if ((policy & CX_COMPRESSION_TYPES_MASK) == 0) {
@@ -608,12 +680,20 @@ static void PtcTrimTextureData(TEXELS *texels) {
 static int PtcEmitBinaryData(FILE *fp, const void *buf, size_t len, CxCompressionPolicy compression) {
 	unsigned int complen;
 	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
-	if (comp == NULL) return 0;
+	if (comp == NULL) PtcPrint(PTC_LEVEL_STOP, _T("Insufficient system resources to compress the output file.\n"));
 	
 	//write binary file data
 	int status = fwrite(comp, 1, complen, fp) == complen;
 	free(comp);
 	return status;
+}
+
+static void PtcEmitBinaryDataByPath(const TCHAR *path, const void *buf, size_t len, CxCompressionPolicy compression) {
+	FILE *fp = PtcOpenFileForWrite(path);
+	PtcEmitBinaryData(fp, buf, len, compression);
+	fclose(fp);
+
+	PtcPrintFileWritten(path);
 }
 
 static void PtcWriteNclr(FILE *fp, const COLOR *pltt, unsigned int nCols, unsigned int charDepth, int bgFmt, int compressPalette, unsigned int plttBase) {
@@ -748,10 +828,20 @@ static void PtcWriteNscr(FILE *fp, const void *scrData, unsigned int scrSize, in
 	bstreamFree(&stm);
 }
 
-static int PtcEmitTextData(FILE *fp, FILE *fpHeader, const char *prefix, const char *name, const char *suffix, const void *buf, size_t len, unsigned int unit, CxCompressionPolicy compression) {
+static void PtcEmitTextData(
+	FILE               *fp,
+	FILE               *fpHeader,
+	const char         *prefix,
+	const char         *name,
+	const char         *suffix,
+	const void         *buf,
+	size_t              len,
+	unsigned int        unit,
+	CxCompressionPolicy compression
+) {
 	unsigned int complen;
 	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
-	if (comp == NULL) return 0;
+	PTC_FAIL_IF(comp == NULL, _T("Error compressing output file: insufficient system resources.\n"));
 	
 	if (compression & CX_COMPRESSION_TYPES_MASK) {
 		//force unit=4 for alignment of compression header
@@ -799,7 +889,6 @@ static int PtcEmitTextData(FILE *fp, FILE *fpHeader, const char *prefix, const c
 	fprintf(fp, "};\n");
 	
 	free(comp);
-	return 1;
 }
 
 static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, unsigned int tilesY, int bgType, unsigned int *pOutSize) {
@@ -862,12 +951,7 @@ static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, un
 }
 
 static void *PtcReadFile(const TCHAR *path, int *pSize) {
-	FILE *fp = _tfopen(path, _T("rb"));
-	if (fp == NULL) {
-		//put file access error
-		_ftprintf(stderr, _T("Could not open '") TC_STR _T("' for read access.\n"), path);
-		exit(1);
-	}
+	FILE *fp = PtcOpenFileForRead(path);
 	
 	unsigned int size;
 	fseek(fp, 0, SEEK_END);
@@ -883,11 +967,7 @@ static void *PtcReadFile(const TCHAR *path, int *pSize) {
 		unsigned int pos = 0;
 		while (pos < size) {
 			unsigned int nRead = fread(buf + pos, 1, size - pos, fp);
-			if (nRead == 0) {
-				//put file access error
-				_ftprintf(stderr, _T("File read error on '") TC_STR _T("'.\n"), path);
-				exit(1);
-			}
+			PTC_FAIL_IF(nRead == 0, _T("File read error on '") TC_STR _T("'.\n"), path);
 			
 			pos += nRead;
 		}
@@ -914,11 +994,6 @@ static void *PtcPadBuffer(void *buf, unsigned int size, unsigned int newSize) {
 
 // ----- main command line routine
 
-#define PTC_FAIL_IF(cond,...)  if (cond) { \
-	fprintf(stderr, __VA_ARGS__);          \
-	exit(1);                               \
-}
-
 typedef void (*PtcSwitchProc) (PtcOptions *options, TCHAR **argv);
 
 typedef struct PtcSwitch_ {
@@ -938,16 +1013,18 @@ static void PtcSwitch_h(PtcOptions *options, TCHAR **argv) {
 
 static void PtcSwitch_s(PtcOptions *options, TCHAR **argv) {
 	(void) argv;
+	(void) options;
 	
 	//set silent mode on
-	options->silent = 1;
+	sLogLevel &= ~PTC_LEVEL_INFO;
 }
 
 static void PtcSwitch_v(PtcOptions *options, TCHAR **argv) {
 	(void) argv;
+	(void) options;
 	
 	//set silent mode off
-	options->silent = 0;
+	sLogLevel |= PTC_LEVEL_INFO;
 }
 
 static void PtcSwitch_o(PtcOptions *options, TCHAR **argv) {
@@ -1116,7 +1193,7 @@ static void PtcSwitch_b(PtcOptions *options, TCHAR **argv) {
 	int nBit = _ttoi(argv[0]);
 	if      (nBit == 4) options->bgType = BGGEN_BGTYPE_TEXT_16x16;
 	else if (nBit == 8) options->bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
-	else                PTC_FAIL_IF(1, "Incorrect bit depth specified.\n");
+	else                PtcPrint(PTC_LEVEL_STOP, _T("The bit depth is invalid (%d). Valid values are 4,8.\n"), nBit);
 }
 
 static void PtcSwitch_bt4(PtcOptions *options, TCHAR **argv) {
@@ -1246,7 +1323,7 @@ static void PtcSwitch_f(PtcOptions *options, TCHAR **argv) {
 		//maybe a format number
 		int fid = _ttoi(fmtString);
 		if (fid >= 1 && fid <= 7) options->texFmt = fid;
-		else _tprintf(_T("Unknown texture format ") TC_STR _T(".\n"), fmtString);
+		else PtcPrint(PTC_LEVEL_STOP, _T("Invalid texture format '") TC_STR _T("'.\n"), fmtString);
 	}
 }
 
@@ -1374,7 +1451,6 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 	}
 	
 	//data output settings
-	opt->silent = 1;                                    // default output level (silent)
 	opt->genMode = PTC_GMODE_BG;                        // default output type (BG graphics)
 	opt->outMode = PTC_OUT_MODE_BINARY;                 // default output format (raw binary data)
 	opt->compressionPolicy = CX_COMPRESSION_VRAM_SAFE;  // default compression (none explicit, VRAM safety required)
@@ -1430,19 +1506,20 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 				int nArgsRequired = sw->nArguments;
 				int nArgsLeft = argc - (i + 1);
 				
-				PTC_FAIL_IF(nArgsLeft < nArgsRequired, "Too few arguments to switch.\n");
+				PTC_FAIL_IF(nArgsLeft < nArgsRequired, _T("Too few arguments to switch. Expceted %d.\n"), nArgsRequired);
 				sw->proc(opt, &argv[i + 1]);
 				
 				//increment i
 				i += nArgsRequired;
 			} else {
 				//unknown switch
-				_tprintf(_T("Ignoring unknown switch ") TC_STR _T(".\n"), arg);
+				PtcPrint(PTC_LEVEL_WARN, _T("Ignoring unknown switch ") TC_STR _T(".\n"), arg);
 			}
 			
 		} else {
 			//add input file
-			PTC_FAIL_IF(opt->nSrcFile >= PTC_INFILE_MAX, "Too many input files.\n");
+			PTC_FAIL_IF(opt->nSrcFile >= PTC_INFILE_MAX, _T("The number of input files (%d) exceeds the maximum allowed (%d).\n"),
+				opt->nSrcFile, PTC_INFILE_MAX);
 			
 			opt->srcFiles[opt->nSrcFile++] = arg;
 		}
@@ -1458,9 +1535,9 @@ int _tmain(int argc, TCHAR **argv) {
 	PtcOptParse(&opt, argc, argv);
 
 	//check for errors
-	PTC_FAIL_IF(opt.nSrcFile == 0, "No source image specified.\n");
-	PTC_FAIL_IF(opt.outBase == NULL, "No output name specified.\n");
-	PTC_FAIL_IF(opt.diffuse < 0 || opt.diffuse > 100, "Diffuse amount out of range (%d)\n", opt.diffuse);
+	PTC_FAIL_IF(opt.nSrcFile == 0,                    _T("No source image specified.\n"));
+	PTC_FAIL_IF(opt.outBase == NULL,                  _T("No output name specified.\n"));
+	PTC_FAIL_IF(opt.diffuse < 0 || opt.diffuse > 100, _T("Diffuse amount (%d) must be between 0 and 100.\n"), opt.diffuse);
 	
 	if (opt.genMode == PTC_GMODE_BG) {
 		//BG mode paramter checks
@@ -1494,23 +1571,30 @@ int _tmain(int argc, TCHAR **argv) {
 		int maxPlttAddr = opt.paletteBase + opt.nPalettes;
 		int maxColAddr = opt.paletteOffset + opt.nMaxColors;
 		
-		PTC_FAIL_IF(opt.outMode == PTC_OUT_MODE_NNSTGA,                "NNS TGA output is not applicable for BG.\n");
-		PTC_FAIL_IF(maxColAddr > (1 << depth),                         "Invalid color count per palette specified for BG of %d-bit depth (%d).\n", depth, opt.nMaxColors);
-		PTC_FAIL_IF(maxPlttAddr > maxPltt,                             "Invalid palette count or base specified for BG (%d).\n", opt.nPalettes);
-		PTC_FAIL_IF(opt.nMaxChars > maxCharsFmt || opt.nMaxChars < -1, "Invalid maximum character count specified for BG (%d).\n", opt.nMaxChars);
-		PTC_FAIL_IF(opt.screenExclusive && (opt.srcChrFile == NULL || opt.srcPalFile == NULL), "Palette and character file required for this command.\n");
+		PTC_FAIL_IF(opt.outMode == PTC_OUT_MODE_NNSTGA,                _T("NNS TGA output is not applicable for BG mode conversion.\n"));
+		PTC_FAIL_IF(maxColAddr > (1 << depth),                         _T("Invalid color count per palette specified for BG of %d-bit depth (%d).\n"), depth, opt.nMaxColors);
+		PTC_FAIL_IF(maxPlttAddr > maxPltt,                             _T("Invalid palette count or base specified for BG (%d).\n"), opt.nPalettes);
+		PTC_FAIL_IF(opt.nMaxChars > maxCharsFmt || opt.nMaxChars < -1, _T("Invalid maximum character count specified for BG (%d).\n"), opt.nMaxChars);
+		PTC_FAIL_IF(opt.screenExclusive && (opt.srcChrFile == NULL || opt.srcPalFile == NULL), _T("Palette and character file required for this command.\n"));
 	} else if (opt.genMode == PTC_GMODE_TEXTURE) {
 		//texture mode paramter checks
-		PTC_FAIL_IF(opt.outMode == PTC_OUT_MODE_DIB,              "DIB output is not applicable for texture.\n");
+		PTC_FAIL_IF(opt.outMode == PTC_OUT_MODE_DIB,              _T("DIB output is not applicable for texture mode conversion.\n"));
 	}
 
 	//MBS copy of base
 	int baseLength = _tcslen(opt.outBase);
 
-	PtcImage images[PTC_INFILE_MAX];
+	PtcImage images[PTC_INFILE_MAX] = { 0 };
 	for (int i = 0; i < opt.nSrcFile; i++) {
 		images[i].px = tgdipReadImage(opt.srcFiles[i], &images[i].width, &images[i].height);
-		PTC_FAIL_IF(images[i].px == NULL, "Could not read image file.\n");
+		PTC_FAIL_IF(images[i].px == NULL, _T("Failed to read the image file '") TC_STR _T("'.\n"), opt.srcFiles[i]);
+	}
+
+	//check image dimensions
+	for (int i = 1; i < opt.nSrcFile; i++) {
+		if (images[i].width != images[0].width || images[i].height != images[0].height) {
+			PtcPrint(PTC_LEVEL_STOP, _T("Input images must all have the same dimensions.\n"));
+		}
 	}
 	
 	//apply alpha key
@@ -1533,7 +1617,7 @@ int _tmain(int argc, TCHAR **argv) {
 	
 	if (opt.genMode == PTC_GMODE_BG) {
 		//Generate BG
-		PTC_FAIL_IF(opt.nSrcFile > 1, "Too many input images for BG generator.\n");
+		PTC_FAIL_IF(opt.nSrcFile > 1, _T("Too many input images for BG generator.\n"));
 		
 		//fix up automatic flags
 		int depth = 4;
@@ -1603,11 +1687,9 @@ int _tmain(int argc, TCHAR **argv) {
 			existingCharsSize = padSize;
 			if (!opt.explicitCharBase) opt.charBase = nExistingChars;
 		}
-
-		if (!opt.silent) {
-			printf("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nDiffuse: %d%%\nPalette base: %d\n\n",
-				depth, opt.nPalettes, opt.nMaxColors, opt.nMaxChars, opt.diffuse, opt.paletteBase);
-		}
+		
+		PtcPrint(PTC_LEVEL_INFO, _T("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nPalette base: %d\n\n"),
+			depth, opt.nPalettes, opt.nMaxColors, opt.nMaxChars, opt.paletteBase);
 
 		//perform appropriate generation of data.
 		unsigned char *chars = NULL;
@@ -1691,7 +1773,7 @@ int _tmain(int argc, TCHAR **argv) {
 				case BGGEN_BGTYPE_BITMAP:           scrType = GRF_SCREEN_TYPE_NONE;       break;
 			}
 			
-			FILE *fp = _tfopen(nameBuffer, _T("wb"));
+			FILE *fp = PtcOpenFileForWrite(nameBuffer);
 			GrfWriteHeader(fp);
 			GrfBgWriteHdr(fp, depth, scrType, images[0].width, images[0].height, paletteOutSize);
 			GrfWritePltt(fp, pal, paletteOutSize, opt.compressionPolicy);
@@ -1699,32 +1781,28 @@ int _tmain(int argc, TCHAR **argv) {
 			GrfWriteScr(fp, screen, screenSize, opt.compressionPolicy);
 			GrfFinalize(fp);
 			fclose(fp);
+			PtcPrintFileWritten(nameBuffer);
+
+			free(nameBuffer);
 		} else if (opt.outMode == PTC_OUT_MODE_BINARY) {
 			//output NBFP, NBFC, NBFS.
 
 			//suffix the filename with .nbfp, .nbfc, .nbfs. So reserve 6 characters+base length.
-			FILE *fp;
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, NBFP_EXTENSION);
 
 			if (!opt.screenExclusive) {
-				fp = _tfopen(opt.srcPalFile == NULL ? nameBuffer : opt.srcPalFile, _T("wb"));
-				PtcEmitBinaryData(fp, pal + paletteOutBase, paletteOutSize * sizeof(COLOR), opt.compressionPolicy);
-				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), opt.srcPalFile == NULL ? nameBuffer : opt.srcPalFile);
+				PtcEmitBinaryDataByPath(opt.srcPalFile == NULL ? nameBuffer : opt.srcPalFile,
+					pal + paletteOutBase, paletteOutSize * sizeof(COLOR), opt.compressionPolicy);
 
 				memcpy(nameBuffer + baseLength, bitmap ? NBFB_EXTENSION : NBFC_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
-				fp = _tfopen(opt.srcChrFile == NULL ? nameBuffer : opt.srcChrFile, _T("wb"));
-				PtcEmitBinaryData(fp, chars, charSize, opt.compressionPolicy);
-				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), opt.srcChrFile == NULL ? nameBuffer : opt.srcChrFile);
+
+				PtcEmitBinaryDataByPath(opt.srcChrFile == NULL ? nameBuffer : opt.srcChrFile, 
+					chars, charSize, opt.compressionPolicy);
 			}
 
 			if (opt.outputScreen) {
 				memcpy(nameBuffer + baseLength, NBFS_EXTENSION, (NBFX_EXTLEN + 1) * sizeof(TCHAR));
-				fp = _tfopen(nameBuffer, _T("wb"));
-				PtcEmitBinaryData(fp, screen, screenSize, opt.compressionPolicy);
-				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+				PtcEmitBinaryDataByPath(nameBuffer, screen, screenSize, opt.compressionPolicy);
 			}
 
 			free(nameBuffer);
@@ -1734,27 +1812,25 @@ int _tmain(int argc, TCHAR **argv) {
 			TCHAR *pathNclr = PtcSuffixFileName(opt.outBase, _T(".nclr"));
 			TCHAR *pathNcgr = PtcSuffixFileName(opt.outBase, bitmap ? _T(".ncbr") : _T(".ncgr"));
 			TCHAR *pathNscr = PtcSuffixFileName(opt.outBase, _T(".nscr"));
-
-			FILE *fp;
 			
 			if (!opt.screenExclusive) {
-				fp = _tfopen(pathNclr, _T("wb"));
+				FILE *fp = PtcOpenFileForWrite(pathNclr);
 				PtcWriteNclr(fp, pal + paletteOutBase, paletteOutSize, depth, opt.bgType, opt.compressPalette, paletteOutBase);
 				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pathNclr);
+				PtcPrintFileWritten(pathNclr);
 
-				fp = _tfopen(pathNcgr, _T("wb"));
+				fp = PtcOpenFileForWrite(pathNcgr);
 				PtcWriteNcgr(fp, chars, charSize, images[0].width / 8, images[0].height / 8, depth, bitmap, opt.nMaxChars != -1);
 				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pathNcgr);
+				PtcPrintFileWritten(pathNcgr);
 
 			}
 
 			if (opt.outputScreen) {
-				fp = _tfopen(pathNscr, _T("wb"));
+				FILE *fp = PtcOpenFileForWrite(pathNscr);
 				PtcWriteNscr(fp, screen, screenSize, opt.bgType, images[0].width / 8, images[0].height / 8);
 				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pathNscr);
+				PtcPrintFileWritten(pathNscr);
 			}
 
 			free(pathNclr);
@@ -1763,10 +1839,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 		} else if (opt.outMode == PTC_OUT_MODE_DIB) { // output DIB file
 			//we physically cannot cram this many colors into a DIB palette
-			if (depth == 8 && opt.nPalettes > 1) {
-				fprintf(stderr, "Cannot output DIB for EXT BG.");
-				return 1;
-			}
+			PTC_FAIL_IF(depth == 8 && opt.nPalettes > 1, _T("Cannot output DIB for EXT BG.\n"));
 
 			//suffix filename with .bmp, reserve 5 characters+base length
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, _T(".bmp"));
@@ -1804,7 +1877,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 			PtcWriteBitmap(palette32, palSize / 2, indexBuffer, images[0].width, images[0].height, nameBuffer);
 
-			if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+			PtcPrintFileWritten(nameBuffer);
 
 			free(palette32);
 			free(indexBuffer);
@@ -1835,9 +1908,9 @@ int _tmain(int argc, TCHAR **argv) {
 			char *prefix = ((bgName[0] < 'a' || bgName[0] > 'z') && (bgName[0] < 'A' || bgName[0] > 'Z')) ? "bg_" : "";
 
 			//write
-			FILE *fp = _tfopen(nameBuffer, _T("wb"));
+			FILE *fp = PtcOpenFileForWrite(nameBuffer);
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
-			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
+			FILE *fpHeader = PtcOpenFileForWrite(nameBuffer);
 			
 			const char *bgFormatName = "Text";
 			switch (opt.bgType) {
@@ -1900,18 +1973,11 @@ int _tmain(int argc, TCHAR **argv) {
 			free(bgName);
 		}
 
-		if (pal != NULL) free(pal);
-		if (chars != NULL) free(chars);
-		if (screen != NULL) free(screen);
+		free(pal);
+		free(chars);
+		free(screen);
 	} else {
 		//Generate Texture
-		
-		//check image dimensions
-		for (int i = 1; i < opt.nSrcFile; i++) {
-			if (images[i].width != images[0].width || images[i].height != images[0].height) {
-				PTC_FAIL_IF(1, "Input images must all have the same dimension.\n");
-			}
-		}
 		int width = images[0].width, height = images[0].height;
 		
 		//fix up automatic flags
@@ -1933,7 +1999,8 @@ int _tmain(int argc, TCHAR **argv) {
 					//OK
 					break;
 				default:
-					PTC_FAIL_IF(1, "The texture format is not supported for multiple palette generation.\n");
+					PtcPrint(PTC_LEVEL_STOP, _T("The ") MB_STR _T("texture format is not supported for multi-palette generation.\n"),
+						TxNameFromTexFormat(opt.texFmt));
 					break;
 			}
 		}
@@ -1982,10 +2049,10 @@ int _tmain(int argc, TCHAR **argv) {
 		static const int bppArray[]   = { 0,  8, 2,  4,   8,     2, 8, 16 };
 		if (opt.nMaxColors > colorMaxes[opt.texFmt]) {
 			opt.nMaxColors = colorMaxes[opt.texFmt];
-			if (!opt.silent) printf("Color count truncated to %d.\n", opt.nMaxColors);
+			PtcPrint(PTC_LEVEL_WARN, _T("Color count truncated to %d.\n"), opt.nMaxColors);
 		}
-		if (!opt.silent) printf("Generating texture\nMax colors: %d\nFormat: %d\nDiffuse: %d%%\nSize: %dx%d\n\n",
-			opt.nMaxColors, opt.texFmt, opt.diffuse, width, height);
+		PtcPrint(PTC_LEVEL_INFO, _T("Generating texture\nMax colors: %d\nFormat: ") MB_STR _T("\nSize: %dx%d\n\n"),
+			opt.nMaxColors, TxNameFromTexFormat(opt.texFmt), width, height);
 
 		TEXTURE texture = { 0 };
 		
@@ -2014,7 +2081,7 @@ int _tmain(int argc, TCHAR **argv) {
 
 				if (params.colorEntries > (unsigned int) (size >> 1)) {
 					params.colorEntries = size >> 1;
-					if (!opt.silent) printf("Color count truncated to %d.\n", params.colorEntries);
+					PtcPrint(PTC_LEVEL_WARN, _T("Color count truncated to %d.\n"), params.colorEntries);
 				}
 			}
 			
@@ -2023,7 +2090,7 @@ int _tmain(int argc, TCHAR **argv) {
 			if (params.fixedPalette != NULL) free(params.fixedPalette);
 		} else {
 			//generation mode for multiple input images
-			PTC_FAIL_IF(opt.fixedPalette != NULL, "Multiple image generation texture mode does not support the fixed palette.\n");
+			PTC_FAIL_IF(opt.fixedPalette != NULL, _T("Multiple image generation texture mode does not support the fixed palette.\n"));
 			
 			RxFlag flag = RX_FLAG_NO_WRITEBACK | RX_FLAG_NO_ALPHA_DITHER;
 			if (opt.c0xp) flag |= RX_FLAG_ALPHA_MODE_RESERVE;
@@ -2113,22 +2180,23 @@ int _tmain(int argc, TCHAR **argv) {
 			if (!(opt.compressionPolicy & CX_COMPRESSION_TYPES_MASK)) opt.compressionPolicy |= CX_COMPRESSION_NONE;
 			
 			int fmt = FORMAT(texture.texels.texImageParam);
-			FILE *fp = _tfopen(nameBuffer, _T("wb"));
+			FILE *fp = PtcOpenFileForWrite(nameBuffer);
 			GrfWriteHeader(fp);
 			GrfTexWriteHdr(fp, fmt, width, texture.texels.height, texture.palette.nColors, opt.c0xp);
 			GrfWritePltt(fp, texture.palette.pal, texture.palette.nColors, opt.compressionPolicy);
 			GrfWriteTexImage(fp, texture.texels.texel, texelSize, texture.texels.cmp, indexSize, opt.compressionPolicy);
 			GrfFinalize(fp);
 			fclose(fp);
+			
+			PtcPrintFileWritten(nameBuffer);
+			
+			free(nameBuffer);
 		} else if (opt.outMode == PTC_OUT_MODE_BINARY) {
 			//suffix the filename with .ntft, .nfti, .nftp. So reserve 6 characters+base length.
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, NTFT_EXTENSION);
 
 			//output texel always
-			FILE *fp = _tfopen(nameBuffer, _T("wb"));
-			PtcEmitBinaryData(fp, texture.texels.texel, texelSize, opt.compressionPolicy);
-			fclose(fp);
-			if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+			PtcEmitBinaryDataByPath(nameBuffer, texture.texels.texel, texelSize, opt.compressionPolicy);
 
 			//output palette if not direct
 			if (opt.texFmt != CT_DIRECT && (opt.fixedPalette == NULL || opt.outFixedPalette)) {
@@ -2136,10 +2204,7 @@ int _tmain(int argc, TCHAR **argv) {
 				if (opt.nSrcFile == 1) {
 					//suffix _pal.bin for single palette
 					memcpy(nameBuffer + baseLength, NTFP_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
-					fp = _tfopen(nameBuffer, _T("wb"));
-					PtcEmitBinaryData(fp, texture.palette.pal, texture.palette.nColors * sizeof(COLOR), opt.compressionPolicy);
-					fclose(fp);
-					if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+					PtcEmitBinaryDataByPath(nameBuffer, texture.palette.pal, texture.palette.nColors * sizeof(COLOR), opt.compressionPolicy);
 				} else {
 					//suffix _imageName_pal.bin for multiple palette
 					for (int i = 0; i < opt.nSrcFile; i++) {
@@ -2159,11 +2224,8 @@ int _tmain(int argc, TCHAR **argv) {
 						free(pltName2);
 						
 						//put data
-						fp = _tfopen(pltName, _T("wb"));
-						PtcEmitBinaryData(fp, texture.palette.pal + i * opt.nMaxColors, opt.nMaxColors * sizeof(COLOR), opt.compressionPolicy);
-						fclose(fp);
-						
-						if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), pltName);
+						PtcEmitBinaryDataByPath(pltName, texture.palette.pal + i * opt.nMaxColors,
+							opt.nMaxColors * sizeof(COLOR), opt.compressionPolicy);
 						free(pltName);
 						free(imageName);
 					}
@@ -2173,10 +2235,7 @@ int _tmain(int argc, TCHAR **argv) {
 			//output index if 4x4
 			if (opt.texFmt == CT_4x4) {
 				memcpy(nameBuffer + baseLength, NTFI_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
-				fp = _tfopen(nameBuffer, _T("wb"));
-				PtcEmitBinaryData(fp, texture.texels.cmp, indexSize, opt.compressionPolicy);
-				fclose(fp);
-				if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+				PtcEmitBinaryDataByPath(nameBuffer, texture.texels.cmp, indexSize, opt.compressionPolicy);
 			}
 
 			free(nameBuffer);
@@ -2185,7 +2244,7 @@ int _tmain(int argc, TCHAR **argv) {
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, _T(".tga"));
 
 			PtcWriteNnsTga(nameBuffer, &texture.texels, &texture.palette);
-			if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+			PtcPrintFileWritten(nameBuffer);
 			free(nameBuffer);
 		} else {
 			//suffix the filename with .c, So reserve 3 characters+base length.
@@ -2212,9 +2271,9 @@ int _tmain(int argc, TCHAR **argv) {
 			//if texture name doesn't start with a letter, prepend "tex_" to its name.
 			char *prefix = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "tex_" : "";
 
-			FILE *fp = _tfopen(nameBuffer, _T("wb"));
+			FILE *fp = PtcOpenFileForWrite(nameBuffer);
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
-			FILE *fpHeader = _tfopen(nameBuffer, _T("wb"));
+			FILE *fpHeader = PtcOpenFileForWrite(nameBuffer);
 			
 			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(opt.texFmt),
 				texture.palette.nColors, TEXW(texture.texels.texImageParam), height);
@@ -2254,8 +2313,8 @@ int _tmain(int argc, TCHAR **argv) {
 			fclose(fp);
 			fclose(fpHeader);
 
-			if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
-			if (!opt.silent) _tprintf(_T("Wrote ") TC_STR _T("\n"), nameBuffer);
+			PtcPrintFileWritten(nameBuffer);
+			PtcPrintFileWritten(nameBuffer);
 			
 			free(texName);
 			free(nameBuffer);
