@@ -13,9 +13,6 @@ INCLUDEDIRS	:= src
 
 LIBS		:= -lm
 LIBDIRS		:=
-ifneq (,$(findstring android,$(TARGET)))
-	LIBDIRS += $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr
-endif
 
 # Build artifacts
 # ---------------
@@ -49,6 +46,8 @@ INSTALL		:= install
 
 ifneq (,$(findstring android,$(TARGET)))
 	CC		:= $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
+else ifneq (,$(findstring ios,$(TARGET)))
+	CC		:= xcrun clang -target aarch64-apple-ios
 endif
 
 # Verbose flag
