@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: CC0-1.0
 #
-# SPDX-FileContributor: Antonio Niño Díaz, 2023
+# SPDX-FileContributor: Antonio Niño Díaz, 2023; Jon Ko, 2026
 
 # Source code paths
 # -----------------
@@ -90,7 +90,7 @@ CFLAGS		+= -std=gnu11 $(WARNFLAGS_C) $(DEFINES) $(INCLUDEFLAGS) -O3 -g0
 
 lib: CFLAGS += -fPIC
 
-LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS)
+LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS) -s
 
 # Intermediate build files
 # ------------------------

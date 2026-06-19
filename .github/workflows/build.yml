@@ -15,6 +15,10 @@ jobs:
             exe_target: x86_64-linux-gnu
             lib_target: x86_64-linux-musl
             image: ubuntu-latest
+          - name: Linux x86
+            exe_target: x86-linux-gnu
+            lib_target: x86-linux-musl
+            image: ubuntu-latest
           - name: Linux ARM64
             exe_target: aarch64-linux-gnu
             lib_target: aarch64-linux-musl
@@ -30,6 +34,10 @@ jobs:
           - name: Windows x64
             exe_target: x86_64-windows-gnu
             lib_target: x86_64-windows-gnu
+            image: ubuntu-latest
+          - name: Windows x86
+            exe_target: x86-windows-gnu
+            lib_target: x86-windows-gnu
             image: ubuntu-latest
           - name: Windows ARM64
             exe_target: aarch64-windows-gnu
@@ -50,6 +58,7 @@ jobs:
         uses: actions/checkout@v7
       - name: Setup zig cc
         uses: mlugg/setup-zig@v2
+        if: ${{ (matrix.platform.name != 'Android ARM64') && (matrix.platform.name != 'iOS ARM64') }}
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1.6.0
         id: setup-ndk
@@ -69,6 +78,6 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.platform.name }}
+          name: ptexconv ${{ matrix.platform.name }}
           path: ptexconv*
           retention-days: 1
