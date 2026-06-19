@@ -1,2 +1,7 @@
 build/
 ptexconv
+*.so
+*.dylib
+*.dll
+*.exe
+.vscode/

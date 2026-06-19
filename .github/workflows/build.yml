@@ -1,0 +1,69 @@
+name: CI Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cross-compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux x64
+            exe_target: x86_64-linux-gnu
+            lib_target: x86_64-linux-musl
+            image: ubuntu-latest
+          - name: Linux ARM64
+            exe_target: aarch64-linux-gnu
+            lib_target: aarch64-linux-musl
+            image: ubuntu-24.04-arm
+          - name: macOS x64
+            exe_target: x86_64-macos
+            lib_target: x86_64-macos
+            image: macos-latest
+          - name: macOS ARM64
+            exe_target: aarch64-macos
+            lib_target: aarch64-macos
+            image: macos-latest
+          - name: Windows x64
+            exe_target: x86_64-windows-gnu
+            lib_target: x86_64-windows-gnu
+            image: ubuntu-latest
+          - name: Windows ARM64
+            exe_target: aarch64-windows-gnu
+            lib_target: aarch64-windows-gnu
+            image: ubuntu-latest
+          - name: Android ARM64
+            exe_target: ''
+            lib_target: aarch64-linux-android
+            image: ubuntu-latest
+          - name: iOS ARM64
+            exe_target: ''
+            lib_target: aarch64-ios
+            image: macos-latest
+          
+    runs-on: ${{ matrix.platform.image }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+      - name: Setup zig cc
+        uses: mlugg/setup-zig@v2
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1.6.0
+        id: setup-ndk
+        if: ${{ matrix.platform.lib_target == 'aarch64-linux-android' }}
+        with:
+          ndk-version: r27d
+      - name: Compile lib for ${{ matrix.platform.name }}
+        run: make -f Makefile.cross lib
+        env:
+          TARGET: ${{ matrix.platform.lib_target }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Compile exe for ${{ matrix.platform.name }}
+        if: ${{ matrix.platform.exe_target != '' }}
+        run: rm -rf build && make -f Makefile.cross
+        env:
+          TARGET: ${{ matrix.platform.exe_target }}
