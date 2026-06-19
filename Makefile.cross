@@ -68,6 +68,9 @@ SOURCES_C	:= $(shell find -L $(SOURCEDIRS) -name "*.c")
 # -------------------------
 
 DEFINES	:= -DNDEBUG
+ifneq (,$(findstring ios,$(TARGET)))
+	DEFINES += -DSTBI_NO_THREAD_LOCALS
+endif
 
 WARNFLAGS_C	:= -Wall -Wextra -Wpedantic \
 		-Wno-pointer-sign -Wno-unused-variable -Wno-unused-result \
@@ -77,6 +80,9 @@ LD	:= $(CC)
 
 INCLUDEFLAGS	:= $(foreach path,$(INCLUDEDIRS),-I$(path)) \
 		   $(foreach path,$(LIBDIRS),-isystem$(path)/include)
+ifneq (,$(findstring ios,$(TARGET)))
+	INCLUDEFLAGS += -isysroot $(shell xcrun --sdk iphoneos --show-sdk-path)
+endif
 
 LIBDIRSFLAGS	:= $(foreach path,$(LIBDIRS),-L$(path)/lib)
 
