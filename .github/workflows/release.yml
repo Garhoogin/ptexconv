@@ -138,7 +138,9 @@ jobs:
           mv ptexconv_Windows_x86/ptexconv.exe release/ptexconv-Windows-x86/
 
           for dir in release/*; do
-            zip $dir.zip $dir/*
+            pushd $dir
+            zip -r ../../$dir.zip .
+            popd
           done
 
       - name: Create GitHub Release
