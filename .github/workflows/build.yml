@@ -2,6 +2,15 @@ name: CI Build
 
 on:
   workflow_dispatch:
+    inputs:
+      version:  
+        description: 'Version'
+        required: true
+        type: 'string'
+      release_notes:
+        description: 'Release Notes'
+        required: true
+        type: 'string'
 
 permissions:
   contents: write
@@ -11,43 +20,43 @@ jobs:
     strategy:
       matrix:
         platform:
-          - name: Linux x64
+          - name: Linux_x64
             exe_target: x86_64-linux-gnu
             lib_target: x86_64-linux-musl
             image: ubuntu-latest
-          - name: Linux x86
+          - name: Linux_x86
             exe_target: x86-linux-gnu
             lib_target: x86-linux-musl
             image: ubuntu-latest
-          - name: Linux ARM64
+          - name: Linux_ARM64
             exe_target: aarch64-linux-gnu
             lib_target: aarch64-linux-musl
             image: ubuntu-24.04-arm
-          - name: macOS x64
+          - name: macOS_x64
             exe_target: x86_64-macos
             lib_target: x86_64-macos
             image: macos-latest
-          - name: macOS ARM64
+          - name: macOS_ARM64
             exe_target: aarch64-macos
             lib_target: aarch64-macos
             image: macos-latest
-          - name: Windows x64
+          - name: Windows_x64
             exe_target: x86_64-windows-gnu
             lib_target: x86_64-windows-gnu
             image: ubuntu-latest
-          - name: Windows x86
+          - name: Windows_x86
             exe_target: x86-windows-gnu
             lib_target: x86-windows-gnu
             image: ubuntu-latest
-          - name: Windows ARM64
+          - name: Windows_ARM64
             exe_target: aarch64-windows-gnu
             lib_target: aarch64-windows-gnu
             image: ubuntu-latest
-          - name: Android ARM64
+          - name: Android_ARM64
             exe_target: ''
             lib_target: aarch64-linux-android
             image: ubuntu-latest
-          - name: iOS ARM64
+          - name: iOS_ARM64
             exe_target: ''
             lib_target: aarch64-ios
             image: macos-latest
@@ -58,7 +67,7 @@ jobs:
         uses: actions/checkout@v7
       - name: Setup zig cc
         uses: mlugg/setup-zig@v2
-        if: ${{ (matrix.platform.name != 'Android ARM64') && (matrix.platform.name != 'iOS ARM64') }}
+        if: ${{ (matrix.platform.name != 'Android_ARM64') && (matrix.platform.name != 'iOS_ARM64') }}
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1.6.0
         id: setup-ndk
@@ -66,18 +75,110 @@ jobs:
         with:
           ndk-version: r27d
       - name: Compile lib for ${{ matrix.platform.name }}
-        run: make -f Makefile.cross lib
+        run: make lib
         env:
           TARGET: ${{ matrix.platform.lib_target }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Compile exe for ${{ matrix.platform.name }}
         if: ${{ matrix.platform.exe_target != '' }}
-        run: rm -rf build && make -f Makefile.cross
+        run: rm -rf build && make
         env:
           TARGET: ${{ matrix.platform.exe_target }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ptexconv ${{ matrix.platform.name }}
+          name: ptexconv_${{ matrix.platform.name }}
           path: ptexconv*
           retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [ cross-compile ]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Download Linux x64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Linux_x64
+      - name: Download Linux x86
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Linux_x86
+      - name: Download Linux ARM64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Linux_ARM64
+
+      - name: Download macOS x64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_macOS_x64
+      - name: Download macOS ARM64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_macOS_ARM64
+
+      - name: Download Windows x64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Windows_x64
+      - name: Download Windows x86
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Windows_x86
+      - name: Download Windows ARM64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Windows_ARM86
+
+      - name: Download Android ARM64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_Android_ARM64
+      - name: Download iOS ARM64
+        uses: actions/download-artifact@v8
+        with:
+          name: ptexconv_iOS_ARM64
+
+      - name: Create release packages
+        run: |
+          mkdir -p release/libs/include
+          mkdir -p release/libs/lib
+          mkdir -p release/ptexconv-Linux-arm64
+          mkdir -p release/ptexconv-Linux-x64
+          mkdir -p release/ptexconv-Linux-x86
+          mkdir -p release/ptexconv-macOS-arm64
+          mkdir -p release/ptexconv-macOS-x64
+          mkdir -p release/ptexconv-Windows-arm64
+          mkdir -p release/ptexconv-Windows-x64
+          mkdir -p release/ptexconv-Windows-x86
+
+          mv src/*.h release/libs/include/
+          mv ptexconv_Linux_ARM64/ptexconv.so release/libs/lib/ptexconv_aarch64.so
+          mv ptexconv_Linux_x64/ptexconv.so release/libs/lib/ptexconv_x86_64.so
+          mv ptexconv_Linux_x86/ptexconv.so release/libs/lib/ptexconv_x86.so
+          mv ptexconv_macOS_ARM64/ptexconv.dylib release/libs/lib/ptexconv_aarch64.dylib
+          mv ptexconv_macOS_x64/ptexconv.dylib release/libs/lib/ptexconv_x86_64.dylib
+          mv ptexconv_Windows_ARM64/ptexconv.dll release/libs/lib/ptexconv_aarch64.dll
+          mv ptexconv_Windows_x64/ptexconv.dll release/libs/lib/ptexconv_x86_64.dll
+          mv ptexconv_Windows_x86/ptexconv.dll release/libs/lib/ptexconv_x86.dll
+
+          mv ptexconv_Linux_ARM64/ptexconv release/ptexconv-Linux-arm64/
+          mv ptexconv_Linux_x64/ptexconv release/ptexconv-Linux-x64/
+          mv ptexconv_Linux_x86/ptexconv release/ptexconv-Linux-x86/
+          mv ptexconv_macOS_ARM64/ptexconv release/ptexconv-macOS-arm64/
+          mv ptexconv_macOS_x64/ptexconv release/ptexconv-macOS-x64/
+          mv ptexconv_Windows_ARM64/ptexconv.exe release/ptexconv-Windows-arm64/
+          mv ptexconv_Windows_x64/ptexconv.exe release/ptexconv-Windows-x64/
+          mv ptexconv_Windows_x86/ptexconv.exe release/ptexconv-Windows-x86/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ptexconv ${{ inputs.version }}
+          tag_name: v${{ inputs.version }}
+          generate_release_notes: true
+          files: ./release/*
+          body: ${{ inputs.release_notes }}
