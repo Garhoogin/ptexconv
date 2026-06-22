@@ -102,6 +102,10 @@ ifneq (,$(findstring ios,$(TARGET)))
 	DEFINES += -DSTBI_NO_THREAD_LOCALS
 endif
 
+ifneq (,$(findstring windows,$(TARGET)))
+	DEFINES += -D_WIN32 -DUNICODE
+endif
+
 WARNFLAGS_C	:= -Wall -Wextra -Wpedantic \
 		-Wno-pointer-sign -Wno-unused-variable -Wno-unused-result \
 		-Wno-unused-parameter -Wno-unused-but-set-variable
@@ -116,11 +120,24 @@ endif
 
 LIBDIRSFLAGS	:= $(foreach path,$(LIBDIRS),-L$(path)/lib)
 
-CFLAGS		+= -std=gnu11 $(WARNFLAGS_C) $(DEFINES) $(INCLUDEFLAGS) -O3 -g0
+CFLAGS		:= -std=gnu11 $(WARNFLAGS_C) $(DEFINES) $(INCLUDEFLAGS) -O3 -g0
+
+ifneq (,$(findstring windows,$(TARGET)))
+	ifneq (,$(findstring aarch64,$(TARGET)))
+		CFLAGS	+= -m64 -municode -fno-pie -static -flto
+	else ifneq (,$(findstring x86_64,$(TARGET)))
+		CFLAGS	+= -m64 -msse2 -municode -fno-pie -static -flto
+	else
+		CFLAGS	+= -municode -msse2 -mfpmath=sse -ffast-math -fno-math-errno -ftree-vectorize -fno-pie -static -flto -fdata-sections -ffunction-sections
+	endif
+endif
 
 lib: CFLAGS += -fPIC
 
 LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS) -s
+ifneq (,$(findstring windows,$(TARGET)))
+	LDFLAGS	+= -Wl,--subsystem,console
+endif
 
 # Intermediate build files
 # ------------------------

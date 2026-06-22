@@ -131,7 +131,7 @@ jobs:
       - name: Download Windows ARM64
         uses: actions/download-artifact@v8
         with:
-          name: ptexconv_Windows_ARM86
+          name: ptexconv_Windows_ARM64
 
       - name: Download Android ARM64
         uses: actions/download-artifact@v8
@@ -164,6 +164,8 @@ jobs:
           mv ptexconv_Windows_ARM64/ptexconv.dll release/libs/lib/ptexconv_aarch64.dll
           mv ptexconv_Windows_x64/ptexconv.dll release/libs/lib/ptexconv_x86_64.dll
           mv ptexconv_Windows_x86/ptexconv.dll release/libs/lib/ptexconv_x86.dll
+          mv ptexconv_Android_ARM64/ptexconv.so release/libs/lib/ptexconv_android_aarch64.so
+          mv ptexconv_iOS_ARM64/ptexconv.dylib release/libs/lib/ptexconv_ios_aarch64.dylib
 
           mv ptexconv_Linux_ARM64/ptexconv release/ptexconv-Linux-arm64/
           mv ptexconv_Linux_x64/ptexconv release/ptexconv-Linux-x64/
