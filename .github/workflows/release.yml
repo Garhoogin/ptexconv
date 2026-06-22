@@ -91,14 +91,14 @@ jobs:
           popd
         if: ${{ endsWith(matrix.platform.lib_target, '-musl') }}
       - name: Compile lib for ${{ matrix.platform.name }}
-        run: make lib
+        run: make -f Makefile.cross lib
         env:
           TARGET: ${{ matrix.platform.lib_target }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           MIMALLOC_PATH: mimalloc/build/libmimalloc.a
       - name: Compile exe for ${{ matrix.platform.name }}
         if: ${{ matrix.platform.exe_target != '' }}
-        run: make
+        run: make -f Makefile.cross
         env:
           TARGET: ${{ matrix.platform.exe_target }}
       - name: Upload artifacts

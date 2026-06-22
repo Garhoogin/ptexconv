@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: CC0-1.0
 #
-# SPDX-FileContributor: Antonio Niño Díaz, 2023; Jon Ko, 2026
+# SPDX-FileContributor: Antonio Niño Díaz, 2023
 
 # Source code paths
 # -----------------
@@ -14,74 +14,26 @@ INCLUDEDIRS	:= src
 LIBS		:= -lm
 LIBDIRS		:=
 
-# Define target (if not specified on cmd)
-ifeq ($(OS),Windows_NT)
-	ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
-		TARGET		?= x86_64-windows-gnu
-	else ifeq ($(PROCESSOR_ARCHITECTURE),x86)
-		TARGET		?= x86-windows-gnu
-	else
-		TARGET		?= aarch64-windows-gnu
-	endif
-else
-	UNAME_S := $(shell uname -s)
-    UNAME_P := $(shell uname -p)
-	ifeq ($(UNAME_S),Linux)
-		ifeq ($(UNAME_P),x86_64)
-			TARGET	?= x86_64-linux-gnu
-		else ifneq ($(filter %86,$(UNAME_P)),)
-			TARGET	?= x86-linux-gnu
-		else ifneq ($(filter arm%,$(UNAME_P)),)
-			TARGET	?= aarch64-linux-gnu
-		else
-			TARGET	?= x86_64-linux-gnu
-		endif
-	else ifeq ($(UNAME_S),Darwin)
-		ifeq ($(UNAME_P),x86_64)
-			TARGET	?= x86_64-macos
-		else
-			TARGET	?= aarch64-macos
-		endif
-	endif
-endif
-
 # Build artifacts
 # ---------------
 
 NAME		:= ptexconv
 BUILDDIR	:= build
-LIBBUILDDIR := build/lib
-
-ifneq (,$(findstring windows,$(TARGET)))
-	ELF		:= $(NAME).exe
-	DLL		:= $(NAME).dll
-else ifneq (,$(or $(findstring macos,$(TARGET)),$(findstring ios,$(TARGET))))
-	ELF		:= $(NAME)
-	DLL		:= $(NAME).dylib
-else
-	ELF		:= $(NAME)
-	DLL		:= $(NAME).so
-endif
+ELF		:= $(NAME)
 
 # Tools
 # -----
 
 STRIP		:= -s
 BINMODE		:= 755
-LIBMODE		:= 644
-CP			:= cp
 
-CC			:= zig cc -target $(TARGET)
+CC		:= gcc
+CXX		:= g++
+CP		:= cp
 MKDIR		:= mkdir
-RM			:= rm -rf
+RM		:= rm -rf
 MAKE		:= make
 INSTALL		:= install
-
-ifneq (,$(findstring android,$(TARGET)))
-	CC		:= $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
-else ifneq (,$(findstring ios,$(TARGET)))
-	CC		:= xcrun clang -target aarch64-apple-ios
-endif
 
 # Verbose flag
 # ------------
@@ -96,88 +48,59 @@ endif
 # ------------
 
 SOURCES_C	:= $(shell find -L $(SOURCEDIRS) -name "*.c")
+SOURCES_CPP	:= $(shell find -L $(SOURCEDIRS) -name "*.cpp")
 
 # Compiler and linker flags
 # -------------------------
 
 DEFINES	:= -DNDEBUG
-ifneq (,$(findstring ios,$(TARGET)))
-	DEFINES += -DSTBI_NO_THREAD_LOCALS
-endif
-
-ifneq (,$(findstring windows,$(TARGET)))
-	DEFINES += -D_WIN32 -DUNICODE
-endif
 
 WARNFLAGS_C	:= -Wall -Wextra -Wpedantic \
-		-Wno-pointer-sign -Wno-unused-variable -Wno-unused-result \
-		-Wno-unused-parameter -Wno-unused-but-set-variable
+		-Wno-maybe-uninitialized -Wno-alloc-size-larger-than -Wno-pointer-sign \
+		-Wno-unused-variable -Wno-unused-result -Wno-unused-parameter \
+		-Wno-unused-but-set-variable
 
-LD	:= $(CC)
+WARNFLAGS_CXX	:= -Wall -Wextra
+
+ifeq ($(SOURCES_CPP),)
+    LD	:= $(CC)
+else
+    LD	:= $(CXX)
+endif
 
 INCLUDEFLAGS	:= $(foreach path,$(INCLUDEDIRS),-I$(path)) \
-		   $(foreach path,$(LIBDIRS),-isystem$(path)/include)
-ifneq (,$(findstring ios,$(TARGET)))
-	INCLUDEFLAGS += -isysroot $(shell xcrun --sdk iphoneos --show-sdk-path)
-endif
+		   $(foreach path,$(LIBDIRS),-I$(path)/include)
 
 LIBDIRSFLAGS	:= $(foreach path,$(LIBDIRS),-L$(path)/lib)
 
-CFLAGS		:= -std=gnu11 $(WARNFLAGS_C) $(DEFINES) $(INCLUDEFLAGS) -O3 -g0
+CFLAGS		+= -std=gnu11 $(WARNFLAGS_C) $(DEFINES) $(INCLUDEFLAGS) -O3
 
-ifneq (,$(findstring windows,$(TARGET)))
-	ifneq (,$(findstring aarch64,$(TARGET)))
-		CFLAGS	+= -m64 -municode -fno-pie -static -flto
-	else ifneq (,$(findstring x86_64,$(TARGET)))
-		CFLAGS	+= -m64 -msse2 -municode -fno-pie -static -flto
-	else
-		CFLAGS	+= -municode -msse2 -mfpmath=sse -ffast-math -fno-math-errno -ftree-vectorize -fno-pie -static -flto -fdata-sections -ffunction-sections
-	endif
-endif
+CXXFLAGS	+= -std=gnu++14 $(WARNFLAGS_CXX) $(DEFINES) $(INCLUDEFLAGS) -O3
 
-LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS) $(STRIP)
-ifneq (,$(findstring windows,$(TARGET)))
-	LDFLAGS	+= -Wl,--subsystem,console
-endif
-
-ifneq (,$(findstring musl,$(TARGET)))
-	ifneq (,$(MIMALLOC_PATH))
-		LDFLAGS += $(MIMALLOC_PATH)
-	endif
-endif
+LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS)
 
 # Intermediate build files
 # ------------------------
 
-OBJS		:= $(addsuffix .o,$(addprefix $(BUILDDIR)/,$(SOURCES_C)))
-LIBOBJS		:= $(addsuffix .o,$(addprefix $(LIBBUILDDIR)/,$(SOURCES_C)))
+OBJS		:= $(addsuffix .o,$(addprefix $(BUILDDIR)/,$(SOURCES_C))) \
+		   $(addsuffix .o,$(addprefix $(BUILDDIR)/,$(SOURCES_CPP)))
 
 DEPS		:= $(OBJS:.o=.d)
 
 # Targets
 # -------
 
-.PHONY: all lib clean install
+.PHONY: all clean install
 
 all: $(ELF)
-
-lib: $(DLL)
 
 $(ELF): $(OBJS)
 	@echo "  LD      $@"
 	$(V)$(LD) -o $@ $(OBJS) $(LDFLAGS)
 
-$(DLL): $(LIBOBJS)
-	@if [ -n "$(findstring musl,$(TARGET))" ] && [ -z "$(MIMALLOC_PATH)" ]; then \
- 		echo "    Please specify a path (as MIMALLOC_PATH) to a statically built mimalloc library when building with musl"; \
- 		echo "    Without mimalloc, performance drops significantly"; \
- 	fi
-	@echo "  LD      $@"
-	$(V)$(LD) -shared -o $@ $(LIBOBJS) $(LDFLAGS)
-
 clean:
 	@echo "  CLEAN  "
-	$(V)$(RM) $(ELF) $(DLL) $(BUILDDIR) $(LIBBUILDDIR)
+	$(V)$(RM) $(ELF) $(BUILDDIR)
 
 INSTALLDIR	?= /opt/blocksds/external/ptexconv
 INSTALLDIR_ABS	:= $(abspath $(INSTALLDIR))
@@ -198,10 +121,10 @@ $(BUILDDIR)/%.c.o : %.c
 	@$(MKDIR) -p $(@D)
 	$(V)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(LIBBUILDDIR)/%.c.o : %.c
-	@echo "  CC      $<"
+$(BUILDDIR)/%.cpp.o : %.cpp
+	@echo "  CXX     $<"
 	@$(MKDIR) -p $(@D)
-	$(V)$(CC) $(CFLAGS) -fPIC -MMD -MP -c -o $@ $<
+	$(V)$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
 # Include dependency files if they exist
 # --------------------------------------
