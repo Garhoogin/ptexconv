@@ -98,49 +98,10 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      - name: Download Linux x64
+      - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
-          name: ptexconv_Linux_x64
-      - name: Download Linux x86
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_Linux_x86
-      - name: Download Linux ARM64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_Linux_ARM64
-
-      - name: Download macOS x64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_macOS_x64
-      - name: Download macOS ARM64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_macOS_ARM64
-
-      - name: Download Windows x64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_Windows_x64
-      - name: Download Windows x86
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_Windows_x86
-      - name: Download Windows ARM64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_Windows_ARM64
-
-      - name: Download Android ARM64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_Android_ARM64
-      - name: Download iOS ARM64
-        uses: actions/download-artifact@v8
-        with:
-          name: ptexconv_iOS_ARM64
+          pattern: ptexconv_*
 
       - name: Create release packages
         run: |
@@ -156,6 +117,8 @@ jobs:
           mkdir -p release/ptexconv-Windows-x86
 
           mv src/*.h release/libs/include/
+
+          ls -l
           mv ptexconv_Linux_ARM64/ptexconv.so release/libs/lib/ptexconv_aarch64.so
           mv ptexconv_Linux_x64/ptexconv.so release/libs/lib/ptexconv_x86_64.so
           mv ptexconv_Linux_x86/ptexconv.so release/libs/lib/ptexconv_x86.so
