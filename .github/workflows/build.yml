@@ -117,8 +117,6 @@ jobs:
           mkdir -p release/ptexconv-Windows-x86
 
           mv src/*.h release/libs/include/
-
-          ls -l
           mv ptexconv_Linux_ARM64/ptexconv.so release/libs/lib/ptexconv_aarch64.so
           mv ptexconv_Linux_x64/ptexconv.so release/libs/lib/ptexconv_x86_64.so
           mv ptexconv_Linux_x86/ptexconv.so release/libs/lib/ptexconv_x86.so
@@ -138,6 +136,10 @@ jobs:
           mv ptexconv_Windows_ARM64/ptexconv.exe release/ptexconv-Windows-arm64/
           mv ptexconv_Windows_x64/ptexconv.exe release/ptexconv-Windows-x64/
           mv ptexconv_Windows_x86/ptexconv.exe release/ptexconv-Windows-x86/
+
+          for dir in release/*; do
+            zip $dir.zip $dir/*
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
