@@ -81,7 +81,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Compile exe for ${{ matrix.platform.name }}
         if: ${{ matrix.platform.exe_target != '' }}
-        run: rm -rf build && make
+        run: make
         env:
           TARGET: ${{ matrix.platform.exe_target }}
       - name: Upload artifacts

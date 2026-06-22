@@ -50,6 +50,8 @@ endif
 
 NAME		:= ptexconv
 BUILDDIR	:= build
+LIBBUILDDIR := build/lib
+
 ifneq (,$(findstring windows,$(TARGET)))
 	ELF		:= $(NAME).exe
 	DLL		:= $(NAME).dll
@@ -67,6 +69,7 @@ endif
 STRIP		:= -s
 BINMODE		:= 755
 LIBMODE		:= 644
+CP			:= cp
 
 CC			:= zig cc -target $(TARGET)
 MKDIR		:= mkdir
@@ -132,9 +135,7 @@ ifneq (,$(findstring windows,$(TARGET)))
 	endif
 endif
 
-lib: CFLAGS += -fPIC
-
-LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS) -s
+LDFLAGS		+= $(LIBDIRSFLAGS) $(LIBS) $(STRIP)
 ifneq (,$(findstring windows,$(TARGET)))
 	LDFLAGS	+= -Wl,--subsystem,console
 endif
@@ -143,13 +144,14 @@ endif
 # ------------------------
 
 OBJS		:= $(addsuffix .o,$(addprefix $(BUILDDIR)/,$(SOURCES_C)))
+LIBOBJS		:= $(addsuffix .o,$(addprefix $(LIBBUILDDIR)/,$(SOURCES_C)))
 
 DEPS		:= $(OBJS:.o=.d)
 
 # Targets
 # -------
 
-.PHONY: all clean install
+.PHONY: all lib clean install
 
 all: $(ELF)
 
@@ -159,13 +161,13 @@ $(ELF): $(OBJS)
 	@echo "  LD      $@"
 	$(V)$(LD) -o $@ $(OBJS) $(LDFLAGS)
 
-$(DLL): $(OBJS)
+$(DLL): $(LIBOBJS)
 	@echo "  LD      $@"
-	$(V)$(LD) -shared -o $@ $(OBJS) $(LDFLAGS)
+	$(V)$(LD) -shared -o $@ $(LIBOBJS) $(LDFLAGS)
 
 clean:
 	@echo "  CLEAN  "
-	$(V)$(RM) $(ELF) $(DLL) $(BUILDDIR)
+	$(V)$(RM) $(ELF) $(DLL) $(BUILDDIR) $(LIBBUILDDIR)
 
 INSTALLDIR	?= /opt/blocksds/external/ptexconv
 INSTALLDIR_ABS	:= $(abspath $(INSTALLDIR))
@@ -185,6 +187,11 @@ $(BUILDDIR)/%.c.o : %.c
 	@echo "  CC      $<"
 	@$(MKDIR) -p $(@D)
 	$(V)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(LIBBUILDDIR)/%.c.o : %.c
+	@echo "  CC      $<"
+	@$(MKDIR) -p $(@D)
+	$(V)$(CC) $(CFLAGS) -fPIC -MMD -MP -c -o $@ $<
 
 # Include dependency files if they exist
 # --------------------------------------
