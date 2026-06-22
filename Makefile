@@ -140,6 +140,12 @@ ifneq (,$(findstring windows,$(TARGET)))
 	LDFLAGS	+= -Wl,--subsystem,console
 endif
 
+ifneq (,$(findstring musl,$(TARGET)))
+	ifneq (,$(MIMALLOC_PATH))
+		LDFLAGS += $(MIMALLOC_PATH)
+	endif
+endif
+
 # Intermediate build files
 # ------------------------
 
@@ -162,6 +168,10 @@ $(ELF): $(OBJS)
 	$(V)$(LD) -o $@ $(OBJS) $(LDFLAGS)
 
 $(DLL): $(LIBOBJS)
+	@if [ -n "$(findstring musl,$(TARGET))" ] && [ -z "$(MIMALLOC_PATH)" ]; then \
+ 		echo "    Please specify a path (as MIMALLOC_PATH) to a statically built mimalloc library when building with musl"; \
+ 		echo "    Without mimalloc, performance drops significantly"; \
+ 	fi
 	@echo "  LD      $@"
 	$(V)$(LD) -shared -o $@ $(LIBOBJS) $(LDFLAGS)
 

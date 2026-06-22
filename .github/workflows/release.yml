@@ -65,6 +65,13 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v7
+      - name: Check out mimalloc (for musl only)
+        uses: actions/checkout@v7
+        with:
+          repository: microsoft/mimalloc
+          path: mimalloc
+          clean: false
+        if: ${{ endsWith(matrix.platform.lib_target, '-musl') }}
       - name: Setup zig cc
         uses: mlugg/setup-zig@v2
         if: ${{ (matrix.platform.name != 'Android_ARM64') && (matrix.platform.name != 'iOS_ARM64') }}
@@ -74,11 +81,21 @@ jobs:
         if: ${{ matrix.platform.lib_target == 'aarch64-linux-android' }}
         with:
           ndk-version: r27d
+      - name: Compile mimalloc for ${{ matrix.platform.name }}
+        run: |
+          pushd mimalloc
+          printf '#!/bin/sh\nexec zig cc -target ${{ matrix.platform.lib_target }} "$@"\n' > ./zig-musl-cc
+          chmod +x ./zig-musl-cc
+          cmake -B build -DCMAKE_C_COMPILER="$(pwd)/zig-musl-cc" -DMI_BUILD_SHARED=OFF -DMI_BUILD_TESTS=OFF
+          cmake --build build
+          popd
+        if: ${{ endsWith(matrix.platform.lib_target, '-musl') }}
       - name: Compile lib for ${{ matrix.platform.name }}
         run: make lib
         env:
           TARGET: ${{ matrix.platform.lib_target }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          MIMALLOC_PATH: mimalloc/build/libmimalloc.a
       - name: Compile exe for ${{ matrix.platform.name }}
         if: ${{ matrix.platform.exe_target != '' }}
         run: make
