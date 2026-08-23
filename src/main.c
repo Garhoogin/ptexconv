@@ -372,10 +372,10 @@ static int PtcImageHasTranslucent(const COLOR32 *px, int nWidth, int nHeight) {
 
 static int PtcAutoSelectTextureFormat(const COLOR32 *px, int nWidth, int nHeight) {
 	//Guess a good format for the data. Default to 4x4.
-	int fmt = CT_4x4;
+	int fmt = GX_TEXFMT_TEX4x4;
 
 	//if the texture is 1024x1024, do not choose 4x4.
-	if (nWidth * nHeight == 1024 * 1024) fmt = CT_256COLOR;
+	if (nWidth * nHeight == 1024 * 1024) fmt = GX_TEXFMT_PLTT256;
 
 	//is there translucency?
 	if (PtcImageHasTranslucent(px, nWidth, nHeight)) {
@@ -383,10 +383,10 @@ static int PtcAutoSelectTextureFormat(const COLOR32 *px, int nWidth, int nHeight
 		int colorCount = ImgCountColorsEx(px, nWidth, nHeight, IMG_CCM_IGNORE_ALPHA | IMG_CCM_NO_COUNT_TRANSPARENT);
 		if (colorCount < 16) {
 			//colors < 16, choose a5i3.
-			fmt = CT_A5I3;
+			fmt = GX_TEXFMT_A5I3;
 		} else {
 			//otherwise, choose a3i5.
-			fmt = CT_A3I5;
+			fmt = GX_TEXFMT_A3I5;
 		}
 	} else {
 		//weigh the other format options for optimal size.
@@ -394,18 +394,18 @@ static int PtcAutoSelectTextureFormat(const COLOR32 *px, int nWidth, int nHeight
 
 		//if <= 4 colors, choose 4-color.
 		if (nColors <= 4) {
-			fmt = CT_4COLOR;
+			fmt = GX_TEXFMT_PLTT4;
 		} else {
 			//weigh 16-color, 256-color, and 4x4. 
 			if ((nWidth * nHeight) <= 1024 * 512) {
 				//under 1024x512/512x1024: use 4x4
-				fmt = CT_4x4;
+				fmt = GX_TEXFMT_TEX4x4;
 			} else if (nColors <= 32) {
 				//not more than 32 colors: use palette16
-				fmt = CT_16COLOR;
+				fmt = GX_TEXFMT_PLTT16;
 			} else {
 				//otherwise, use palette256
-				fmt = CT_256COLOR;
+				fmt = GX_TEXFMT_PLTT256;
 			}
 		}
 	}
@@ -455,16 +455,16 @@ void PtcWriteNnsTga(const TCHAR *name, TEXELS *texels, PALETTE *palette) {
 	PtcWriteNnsTgaSection(fp, "nns_txel", texels->texel, txelLength);
 
 	//write 4x4 if applicable
-	if (FORMAT(texels->texImageParam) == CT_4x4) {
+	if (FORMAT(texels->texImageParam) == GX_TEXFMT_TEX4x4) {
 		PtcWriteNnsTgaSection(fp, "nns_pidx", texels->cmp, txelLength / 2);
 	}
 
 	//palette (if applicable)
-	if (FORMAT(texels->texImageParam) != CT_DIRECT) {
+	if (FORMAT(texels->texImageParam) != GX_TEXFMT_DIRECT) {
 		PtcWriteNnsTgaSection(fp, "nns_pnam", palette->name, (unsigned int) -1);
 		
 		int nColors = palette->nColors;
-		if (FORMAT(texels->texImageParam) == CT_4COLOR && nColors > 4) nColors = 4;
+		if (FORMAT(texels->texImageParam) == GX_TEXFMT_PLTT4 && nColors > 4) nColors = 4;
 		PtcWriteNnsTgaSection(fp, "nns_pcol", palette->pal, nColors * sizeof(COLOR));
 	}
 	
@@ -659,7 +659,7 @@ static void PtcTrimTextureData(TEXELS *texels) {
 	
 	//for all but 4x4, we may trim the texture data by cutting rows off.
 	int format = FORMAT(texels->texImageParam);
-	if (format != CT_4x4) {
+	if (format != GX_TEXFMT_TEX4x4) {
 		//trim by rows
 		unsigned int bpps[] = { 0, 8, 2, 4, 8, 2, 8, 16 };
 		unsigned int stride = TEXW(texels->texImageParam) * bpps[format] / 8;
@@ -704,7 +704,7 @@ static void PtcWriteNclr(FILE *fp, const COLOR *pltt, unsigned int nCols, unsign
 	unsigned char pcmpHeader[] = { 0, 0, 0xEF, 0xBE, 8, 0, 0, 0 };
 
 	//fill PLTT header
-	*(uint32_t *) (plttHeader + 0x00) = (charDepth == 8) ? CT_256COLOR : CT_16COLOR;
+	*(uint32_t *) (plttHeader + 0x00) = (charDepth == 8) ? GX_TEXFMT_PLTT256 : GX_TEXFMT_PLTT16;
 	*(uint32_t *) (plttHeader + 0x04) = (bgFmt == BGGEN_BGTYPE_AFFINEEXT_256x16);
 	*(uint32_t *) (plttHeader + 0x08) = nCols * sizeof(COLOR);
 
@@ -757,7 +757,7 @@ static void PtcWriteNcgr(FILE *fp, const unsigned char *charData, unsigned int c
 	unsigned char charHeader[0x18] = { 0 };
 	*(uint16_t *) (charHeader + 0x00) = charsX;
 	*(uint16_t *) (charHeader + 0x02) = charsY;
-	*(uint32_t *) (charHeader + 0x04) = (charDepth == 8) ? CT_256COLOR : CT_16COLOR;
+	*(uint32_t *) (charHeader + 0x04) = (charDepth == 8) ? GX_TEXFMT_PLTT256 : GX_TEXFMT_PLTT16;
 	*(uint32_t *) (charHeader + 0x08) = 0x000010; // 1D 32K
 	*(uint32_t *) (charHeader + 0x0C) = bitmap ? 1 : 0;
 	*(uint32_t *) (charHeader + 0x10) = charSize;
@@ -1312,13 +1312,13 @@ static void PtcSwitch_f(PtcOptions *options, TCHAR **argv) {
 	const TCHAR *fmtString = argv[0];
 
 	//what format?
-	if      (_tcscmp(fmtString, _T("a3i5"      )) == 0) options->texFmt = CT_A3I5;
-	else if (_tcscmp(fmtString, _T("a5i3"      )) == 0) options->texFmt = CT_A5I3;
-	else if (_tcscmp(fmtString, _T("palette4"  )) == 0) options->texFmt = CT_4COLOR;
-	else if (_tcscmp(fmtString, _T("palette16" )) == 0) options->texFmt = CT_16COLOR;
-	else if (_tcscmp(fmtString, _T("palette256")) == 0) options->texFmt = CT_256COLOR;
-	else if (_tcscmp(fmtString, _T("tex4x4"    )) == 0) options->texFmt = CT_4x4;
-	else if (_tcscmp(fmtString, _T("direct"    )) == 0) options->texFmt = CT_DIRECT;
+	if      (_tcscmp(fmtString, _T("a3i5"      )) == 0) options->texFmt = GX_TEXFMT_A3I5;
+	else if (_tcscmp(fmtString, _T("a5i3"      )) == 0) options->texFmt = GX_TEXFMT_A5I3;
+	else if (_tcscmp(fmtString, _T("palette4"  )) == 0) options->texFmt = GX_TEXFMT_PLTT4;
+	else if (_tcscmp(fmtString, _T("palette16" )) == 0) options->texFmt = GX_TEXFMT_PLTT16;
+	else if (_tcscmp(fmtString, _T("palette256")) == 0) options->texFmt = GX_TEXFMT_PLTT256;
+	else if (_tcscmp(fmtString, _T("tex4x4"    )) == 0) options->texFmt = GX_TEXFMT_TEX4x4;
+	else if (_tcscmp(fmtString, _T("direct"    )) == 0) options->texFmt = GX_TEXFMT_DIRECT;
 	else {
 		//maybe a format number
 		int fid = _ttoi(fmtString);
@@ -1984,18 +1984,18 @@ int _tmain(int argc, TCHAR **argv) {
 		if (opt.texFmt == -1) {
 			opt.texFmt = PtcAutoSelectTextureFormat(images[0].px, width, height);
 			
-			if (opt.nSrcFile > 1 && !(opt.texFmt == CT_4COLOR || opt.texFmt == CT_16COLOR || opt.texFmt == CT_256COLOR)) {
+			if (opt.nSrcFile > 1 && !(opt.texFmt == GX_TEXFMT_PLTT4 || opt.texFmt == GX_TEXFMT_PLTT16 || opt.texFmt == GX_TEXFMT_PLTT256)) {
 				//set texture format to palette256 by default
-				opt.texFmt = CT_256COLOR;
+				opt.texFmt = GX_TEXFMT_PLTT256;
 			}
 		}
 		
 		//checks for multiple image generation mode
 		if (opt.nSrcFile > 1) {
 			switch (opt.texFmt) {
-				case CT_4COLOR:
-				case CT_16COLOR:
-				case CT_256COLOR:
+				case GX_TEXFMT_PLTT4:
+				case GX_TEXFMT_PLTT16:
+				case GX_TEXFMT_PLTT256:
 					//OK
 					break;
 				default:
@@ -2007,13 +2007,13 @@ int _tmain(int argc, TCHAR **argv) {
 		
 		if (opt.nMaxColors == -1) {
 			switch (opt.texFmt) {
-				case CT_A3I5     : opt.nMaxColors =  32; break;
-				case CT_A5I3     : opt.nMaxColors =   8; break;
-				case CT_4COLOR   : opt.nMaxColors =   4; break;
-				case CT_16COLOR  : opt.nMaxColors =  16; break;
-				case CT_256COLOR : opt.nMaxColors = 256; break;
-				case CT_DIRECT   : opt.nMaxColors =   0; break;
-				case CT_4x4:
+				case GX_TEXFMT_A3I5     : opt.nMaxColors =  32; break;
+				case GX_TEXFMT_A5I3     : opt.nMaxColors =   8; break;
+				case GX_TEXFMT_PLTT4   : opt.nMaxColors =   4; break;
+				case GX_TEXFMT_PLTT16  : opt.nMaxColors =  16; break;
+				case GX_TEXFMT_PLTT256 : opt.nMaxColors = 256; break;
+				case GX_TEXFMT_DIRECT   : opt.nMaxColors =   0; break;
+				case GX_TEXFMT_TEX4x4:
 					opt.nMaxColors = PtcAutoSelectTex4x4ColorCount(width, height);
 					break;
 			}
@@ -2029,7 +2029,7 @@ int _tmain(int argc, TCHAR **argv) {
 		if (opt.c0xp == -1) {
 			opt.c0xp = 0;
 			
-			if (opt.texFmt == CT_4COLOR || opt.texFmt == CT_16COLOR || opt.texFmt == CT_256COLOR) {
+			if (opt.texFmt == GX_TEXFMT_PLTT4 || opt.texFmt == GX_TEXFMT_PLTT16 || opt.texFmt == GX_TEXFMT_PLTT256) {
 				for (int i = 0; i < width * height * opt.nSrcFile; i++) {
 					unsigned int a = px[i] >> 24;
 					if (a < 0x80) {
@@ -2040,7 +2040,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 		}
 		
-		if (opt.texFmt == CT_4x4 && opt.noLimitPaletteSize) {
+		if (opt.texFmt == GX_TEXFMT_TEX4x4 && opt.noLimitPaletteSize) {
 			//set high palette size (effectively no limit)
 			opt.nMaxColors = 32768;
 		}
@@ -2063,7 +2063,7 @@ int _tmain(int argc, TCHAR **argv) {
 			params.colorEntries = opt.nMaxColors;
 			params.diffuseAmount = (float) opt.diffuse / 100.0f;
 			params.dither = !!opt.diffuse;
-			params.ditherAlpha = params.dither && opt.ditherAlpha && (opt.texFmt == CT_A3I5 || opt.texFmt == CT_A5I3);
+			params.ditherAlpha = params.dither && opt.ditherAlpha && (opt.texFmt == GX_TEXFMT_A3I5 || opt.texFmt == GX_TEXFMT_A5I3);
 			params.fixedPalette = NULL;
 			params.fmt = opt.texFmt;
 			params.width = width;
@@ -2170,7 +2170,7 @@ int _tmain(int argc, TCHAR **argv) {
 			texture.texels.height = TEXH(texture.texels.texImageParam);
 		}
 		int texelSize = TEXW(texture.texels.texImageParam) * texture.texels.height * bppArray[opt.texFmt] / 8;
-		int indexSize = (opt.texFmt == CT_4x4) ? (texelSize >> 1) : 0;
+		int indexSize = (opt.texFmt == GX_TEXFMT_TEX4x4) ? (texelSize >> 1) : 0;
 
 		if (opt.outMode == PTC_OUT_MODE_GRF) {
 			//output GRIT GRF file
@@ -2199,7 +2199,7 @@ int _tmain(int argc, TCHAR **argv) {
 			PtcEmitBinaryDataByPath(nameBuffer, texture.texels.texel, texelSize, opt.compressionPolicy);
 
 			//output palette if not direct
-			if (opt.texFmt != CT_DIRECT && (opt.fixedPalette == NULL || opt.outFixedPalette)) {
+			if (opt.texFmt != GX_TEXFMT_DIRECT && (opt.fixedPalette == NULL || opt.outFixedPalette)) {
 				//depending on the number of input images, we may have to use a more specific name template.
 				if (opt.nSrcFile == 1) {
 					//suffix _pal.bin for single palette
@@ -2233,7 +2233,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			//output index if 4x4
-			if (opt.texFmt == CT_4x4) {
+			if (opt.texFmt == GX_TEXFMT_TEX4x4) {
 				memcpy(nameBuffer + baseLength, NTFI_EXTENSION, (NTFX_EXTLEN + 1) * sizeof(TCHAR));
 				PtcEmitBinaryDataByPath(nameBuffer, texture.texels.cmp, indexSize, opt.compressionPolicy);
 			}
@@ -2293,7 +2293,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			//write index
-			if (opt.texFmt == CT_4x4) {
+			if (opt.texFmt == GX_TEXFMT_TEX4x4) {
 				fprintf(fpHeader, "//\n// Generated index data\n//\n");
 				PtcEmitTextData(fp, fpHeader, prefix, texName, "_idx", texture.texels.cmp, indexSize, 2, opt.compressionPolicy);
 				
@@ -2302,7 +2302,7 @@ int _tmain(int argc, TCHAR **argv) {
 			}
 
 			//write palette
-			if (opt.texFmt != CT_DIRECT && opt.fixedPalette == NULL) {
+			if (opt.texFmt != GX_TEXFMT_DIRECT && opt.fixedPalette == NULL) {
 				fprintf(fpHeader, "//\n// Generated palette data\n//\n");
 				PtcEmitTextData(fp, fpHeader, prefix, texName, "_pal", texture.palette.pal, texture.palette.nColors * 2, 2, opt.compressionPolicy);
 				
