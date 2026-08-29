@@ -63,7 +63,8 @@ typedef struct PtcImage_ {
 
 typedef enum PtcDataType_ {
 	PTC_GMODE_BG,         // Data output is a background graphic
-	PTC_GMODE_TEXTURE     // Data output is a texture
+	PTC_GMODE_TEXTURE,    // Data output is a texture
+	PTC_GMODE_PALETTE     // Data output is a palette
 } PtcDataType;
 
 typedef enum PtcOutputMode_ {
@@ -144,7 +145,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.6.1.0"
+#define VERSION "1.7.0.0"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
@@ -154,6 +155,7 @@ static const char *g_helpString = ""
 	"Global options:\n"
 	"   -gb     Generate BG (default)\n"
 	"   -gt     Generate texture\n"
+	"   -gp     Generate color palette\n"
 	"   -o      Specify output base name\n"
 	"   -ob     Output binary (default)\n"
 	"   -oc     Output as C header file\n"
@@ -200,6 +202,11 @@ static const char *g_helpString = ""
 	"   -fp <f> Specify fixed palette file\n"
 	"   -fpo    Outputs the fixed palette among other output files when used\n"
 	"\n"
+	"Color Palette Options:\n"
+	"   -onns   Output as NCLR\n"
+	"   -t0x    Color 0 is transparent     (default: inferred)\n"
+	"   -t0o    Color 0 is not transparent (default: inferred)\n"
+	"\n"
 	"Compression Options:\n"
 	"   -cbios  Enable use of all BIOS compression types (valid for binary, C, GRF)\n"
 	"   -cno    Enable use of no/dummy compression       (valid for binary, C, GRF)\n"
@@ -214,29 +221,19 @@ static const char *g_helpString = ""
 "";
 
 static const char *texHeader = ""
-	"///////////////////////////////////////\n"
-	"// \n"
-	"// NAME: %s\n"
-	"// \n"
-	"// Generated %d/%d/%d %d:%02d %cM\n"
 	"// FORMAT  : %s\n"
 	"// PALETTE : %d colors\n"
 	"// SIZE    : %dx%d\n"
-	"// \n"
-	"///////////////////////////////////////\n\n"
 "";
 
 static const char *bgHeader = ""
-	"///////////////////////////////////////\n"
-	"// \n"
-	"// NAME: %s\n"
-	"// \n"
-	"// Generated %d/%d/%d %d:%02d %cM\n"
 	"// FORMAT  : %s (%dbpp)\n"
 	"// PALETTE : %d palettes (base %d)\n"
 	"// SIZE    : %dx%d\n"
-	"// \n"
-	"///////////////////////////////////////\n\n"
+"";
+
+static const char *plttHeader = ""
+	"// PALETTE : %d colors\n"
 "";
 
 // log level
@@ -631,6 +628,34 @@ static TCHAR *PtcGetFileName(const TCHAR *path) {
 	return (TCHAR *) start;
 }
 
+static char *PtcFileNameToCSymbolName(const TCHAR *filename) {
+	//file name component (stripped slash)
+	const TCHAR *name = PtcGetFileName(filename);
+
+	//we take the file name up until its last dot, or to end of string
+	const TCHAR *endp = _tcsrchr(name, _T('.'));
+	if (endp == NULL) endp = name + _tcslen(name);
+	
+	size_t len = endp - name;
+	char *sym = (char *) malloc(len + 1);
+
+	for (size_t i = 0; i < len; i++) {
+		TCHAR ch = name[i];
+		
+		//C symbol valid characters: 0-9, a-z, A-Z, _
+		int is09 = (ch >= _T('-') && ch <= _T('9'));
+		int isaz = (ch >= _T('a') && ch <= _T('z'));
+		int isAZ = (ch >= _T('A') && ch <= _T('Z'));
+		if (!is09 && !isaz && !isAZ && ch != _T('_')) ch = _T('_'); // convert to underscore
+
+		//put
+		sym[i] = (char) ch;
+	}
+
+	sym[len] = 0;  // null terminate
+	return sym;
+}
+
 
 // ----- file output routines
 
@@ -828,16 +853,61 @@ static void PtcWriteNscr(FILE *fp, const void *scrData, unsigned int scrSize, in
 	bstreamFree(&stm);
 }
 
+static void PtcBeginEmitSourceFileHeading(
+	FILE       *fp,
+	FILE       *fpHeader,
+	const char *name
+) {
+	//generator date/time
+	int month, day, year, hour, minute, am;
+	PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
+	
+	fprintf(fp, ""
+			"/////////////////////////////////////////////////////////////////////////////\n"
+			"// \n"
+			"// NAME: %s\n"
+			"// \n"
+			"// Generated %d/%d/%d %d:%02d %cM\n"
+		"", name, month, day, year, hour, minute, am ? 'A' : 'P');
+	fprintf(fpHeader, ""
+			"/////////////////////////////////////////////////////////////////////////////\n"
+			"// \n"
+			"// NAME: %s\n"
+			"// \n"
+			"// Generated %d/%d/%d %d:%02d %cM\n"
+		"", name, month, day, year, hour, minute, am ? 'A' : 'P');
+}
+
+static void PtcEndEmitSourceFileHeading(
+	FILE *fp,
+	FILE *fpHeader
+) {
+	//end heading comment
+	fprintf(fp,
+		"// \n"
+		"/////////////////////////////////////////////////////////////////////////////\n\n");
+	fprintf(fpHeader,
+		"// \n"
+		"/////////////////////////////////////////////////////////////////////////////\n\n");
+
+	//header file heading end
+	fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
+	
+	//source file heading end
+	fprintf(fp, "#include <stdint.h>\n\n");
+}
+
 static void PtcEmitTextData(
-	FILE               *fp,
-	FILE               *fpHeader,
-	const char         *prefix,
-	const char         *name,
-	const char         *suffix,
-	const void         *buf,
-	size_t              len,
-	unsigned int        unit,
-	CxCompressionPolicy compression
+	FILE               *fp,          // file handle for the C source file
+	FILE               *fpHeader,    // file handle for the C header file
+	const char         *prefix,      // optional name prefix for the symbol
+	const char         *name,        // main name for the symbol
+	const char         *suffix,      // optional name suffix for the symbol
+	const char         *typeName,    // optional data type name for the header comment
+	const void         *buf,         // data buffer
+	size_t              len,         // data buffer size
+	unsigned int        unit,        // data unit size (1=byte, 2=short, 4=long)
+	CxCompressionPolicy compression  // data compression policy
 ) {
 	unsigned int complen;
 	unsigned char *comp = PtcCompressByPolicy(buf, len, &complen, compression);
@@ -860,7 +930,9 @@ static void PtcEmitTextData(
 	
 	size_t nUnit = (complen + unit - 1) / unit;
 	unsigned int nCols = 32 / unit;
-	
+
+	if (typeName == NULL) typeName = "";
+	fprintf(fpHeader, "//\n// Generated %s data%s\n//\n", typeName, compression ? " (compressed)" : "");
 	
 	fprintf(fp, "const %s %s%s%s[] = ", type, prefix, name, suffix);
 	fprintf(fp, "{\n    ");
@@ -889,6 +961,9 @@ static void PtcEmitTextData(
 	fprintf(fp, "};\n");
 	
 	free(comp);
+	
+	fprintf(fp, "\n");
+	fprintf(fpHeader, "\n");
 }
 
 static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, unsigned int tilesY, int bgType, unsigned int *pOutSize) {
@@ -1077,6 +1152,13 @@ static void PtcSwitch_gt(PtcOptions *options, TCHAR **argv) {
 	
 	//set generator mode to texture mode
 	options->genMode = PTC_GMODE_TEXTURE;
+}
+
+static void PtcSwitch_gp(PtcOptions *options, TCHAR **argv) {
+	(void) argv;
+	
+	//set generator mode to palete mode
+	options->genMode = PTC_GMODE_PALETTE;
 }
 
 static void PtcSwitch_ob(PtcOptions *options, TCHAR **argv) {
@@ -1389,7 +1471,8 @@ static const PtcSwitch sSwitches[] = {
 	// ----- Generate mode switches
 	{ _T("gb"),    0, PtcSwitch_gb },
 	{ _T("gt"),    0, PtcSwitch_gt },
-	
+	{ _T("gp"),    0, PtcSwitch_gp },
+
 	// ----- Output type switches
 	{ _T("ob"),    0, PtcSwitch_ob   },
 	{ _T("oc"),    0, PtcSwitch_oc   },
@@ -1590,10 +1673,12 @@ int _tmain(int argc, TCHAR **argv) {
 		PTC_FAIL_IF(images[i].px == NULL, _T("Failed to read the image file '") TC_STR _T("'.\n"), opt.srcFiles[i]);
 	}
 
-	//check image dimensions
-	for (int i = 1; i < opt.nSrcFile; i++) {
-		if (images[i].width != images[0].width || images[i].height != images[0].height) {
-			PtcPrint(PTC_LEVEL_STOP, _T("Input images must all have the same dimensions.\n"));
+	//check image dimensions. For texture/BG mode, all images must have the same dimension.
+	if (opt.genMode == PTC_GMODE_BG || opt.genMode == PTC_GMODE_TEXTURE) {
+		for (int i = 1; i < opt.nSrcFile; i++) {
+			if (images[i].width != images[0].width || images[i].height != images[0].height) {
+				PtcPrint(PTC_LEVEL_STOP, _T("Input images must all have the same dimensions.\n"));
+			}
 		}
 	}
 	
@@ -1612,6 +1697,18 @@ int _tmain(int argc, TCHAR **argv) {
 		for (int i = 0; i < images[j].width * images[j].height; i++) {
 			COLOR32 c = images[j].px[i];
 			if (((c >> 24) & 0xFF) == 0) images[j].px[i] = 0;
+		}
+	}
+
+	//check alpha channel of the input images
+	int hasTransparent = 0;
+	for (int i = 0; i < opt.nSrcFile; i++) {
+		for (int j = 0; j < images[j].width * images[j].height; j++) {
+			unsigned int a = images[i].px[j] >> 24;
+			if (a < 0x80) {
+				hasTransparent = 1; // transparent pixel presence
+				break;
+			}
 		}
 	}
 	
@@ -1886,23 +1983,8 @@ int _tmain(int argc, TCHAR **argv) {
 			//suffix the filename with .c, So reserve 3 characters+base length.
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, _T(".c"));
 
-			int month, day, year, hour, minute, am;
-			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
-
-			//find BG name
-			const TCHAR *name = PtcGetFileName(opt.srcFiles[0]);
-
 			//copy to MBS buffer, stripping extension too
-			char *bgName = (char *) calloc(_tcslen(name) + 1, sizeof(char));
-			for (unsigned i = 0; i < _tcslen(name); i++) {
-				TCHAR tch = name[i];
-				if (tch == _T('.')) {
-					bgName[i] = '\0';
-					break;
-				}
-				bgName[i] = (char) tch;
-			}
-			bgName[_tcslen(name)] = '\0';
+			char *bgName = PtcFileNameToCSymbolName(opt.srcFiles[0]);
 
 			//if name doesn't start with a letter, prepend "bg_" to its name.
 			char *prefix = ((bgName[0] < 'a' || bgName[0] > 'z') && (bgName[0] < 'A' || bgName[0] > 'Z')) ? "bg_" : "";
@@ -1928,43 +2010,30 @@ int _tmain(int argc, TCHAR **argv) {
 					bgFormatName = "Bitmap";
 					break;
 			}
-			
-			fprintf(fp, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
-				bgFormatName, depth, opt.nPalettes,
-				opt.paletteBase, images[0].width, images[0].height);
-			fprintf(fpHeader, bgHeader, bgName, month, day, year, hour, minute, am ? 'A' : 'P',
-				bgFormatName, depth, opt.nPalettes,
-				opt.paletteBase, images[0].width, images[0].height);
-			fprintf(fp, "#include <stdint.h>\n\n");
-			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
+
+			PtcBeginEmitSourceFileHeading(fp, fpHeader, bgName);
+			fprintf(fp,       bgHeader, bgFormatName, depth, opt.nPalettes, opt.paletteBase, images[0].width, images[0].height);
+			fprintf(fpHeader, bgHeader, bgFormatName, depth, opt.nPalettes, opt.paletteBase, images[0].width, images[0].height);
+			PtcEndEmitSourceFileHeading(fp, fpHeader);
 
 			if (!opt.screenExclusive) {
 				//write character
 				{
-					fprintf(fpHeader, "//\n// Generated character data\n//\n");
-					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_char", chars, charSize, 2, opt.compressionPolicy);
-					
-					fprintf(fp, "\n");
-					fprintf(fpHeader, "\n");
+					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_char", "character",
+						chars, charSize, 2, opt.compressionPolicy);
 				}
 
 				//write palette
 				{
-					fprintf(fpHeader, "//\n// Generated palette data\n//\n");
-					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_pal", pal, paletteOutSize * 2, 2, opt.compressionPolicy);
-					
-					fprintf(fp, "\n");
-					fprintf(fpHeader, "\n");
+					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_pal", "palette",
+						pal, paletteOutSize * sizeof(COLOR), sizeof(COLOR), opt.compressionPolicy);
 				}
 			}
 
 			if (opt.outputScreen) {
 				//write screen
-				fprintf(fpHeader, "//\n// Generated screen data\n//\n");
-				PtcEmitTextData(fp, fpHeader, prefix, bgName, "_screen", screen, screenSize, 2, opt.compressionPolicy);
-				
-				fprintf(fp, "\n");
-				fprintf(fpHeader, "\n");
+				PtcEmitTextData(fp, fpHeader, prefix, bgName, "_screen", "screen",
+					screen, screenSize, 2, opt.compressionPolicy);
 			}
 			fclose(fp);
 			fclose(fpHeader);
@@ -1976,7 +2045,7 @@ int _tmain(int argc, TCHAR **argv) {
 		free(pal);
 		free(chars);
 		free(screen);
-	} else {
+	} else if (opt.genMode == PTC_GMODE_TEXTURE) {
 		//Generate Texture
 		int width = images[0].width, height = images[0].height;
 		
@@ -2007,12 +2076,12 @@ int _tmain(int argc, TCHAR **argv) {
 		
 		if (opt.nMaxColors == -1) {
 			switch (opt.texFmt) {
-				case GX_TEXFMT_A3I5     : opt.nMaxColors =  32; break;
-				case GX_TEXFMT_A5I3     : opt.nMaxColors =   8; break;
+				case GX_TEXFMT_A3I5    : opt.nMaxColors =  32; break;
+				case GX_TEXFMT_A5I3    : opt.nMaxColors =   8; break;
 				case GX_TEXFMT_PLTT4   : opt.nMaxColors =   4; break;
 				case GX_TEXFMT_PLTT16  : opt.nMaxColors =  16; break;
 				case GX_TEXFMT_PLTT256 : opt.nMaxColors = 256; break;
-				case GX_TEXFMT_DIRECT   : opt.nMaxColors =   0; break;
+				case GX_TEXFMT_DIRECT  : opt.nMaxColors =   0; break;
 				case GX_TEXFMT_TEX4x4:
 					opt.nMaxColors = PtcAutoSelectTex4x4ColorCount(width, height);
 					break;
@@ -2027,16 +2096,10 @@ int _tmain(int argc, TCHAR **argv) {
 
 		//infer color 0 mode
 		if (opt.c0xp == -1) {
-			opt.c0xp = 0;
-			
 			if (opt.texFmt == GX_TEXFMT_PLTT4 || opt.texFmt == GX_TEXFMT_PLTT16 || opt.texFmt == GX_TEXFMT_PLTT256) {
-				for (int i = 0; i < width * height * opt.nSrcFile; i++) {
-					unsigned int a = px[i] >> 24;
-					if (a < 0x80) {
-						opt.c0xp = 1; // transparent pixel presence
-						break;
-					}
-				}
+				opt.c0xp = hasTransparent;
+			} else {
+				opt.c0xp = 0; // not applicable
 			}
 		}
 		
@@ -2250,23 +2313,8 @@ int _tmain(int argc, TCHAR **argv) {
 			//suffix the filename with .c, So reserve 3 characters+base length.
 			TCHAR *nameBuffer = PtcSuffixFileName(opt.outBase, _T(".c"));
 
-			int month, day, year, hour, minute, am;
-			PtcGetDateTime(&month, &day, &year, &hour, &minute, &am);
-
-			//find texture name
-			const TCHAR *name = PtcGetFileName(opt.srcFiles[0]);
-
-			//copy to MBS buffer, stripping extension too
-			char *texName = (char *) calloc(_tcslen(name) + 1, sizeof(char));
-			for (unsigned i = 0; i < _tcslen(name); i++) {
-				TCHAR tch = name[i];
-				if (tch == _T('.')) {
-					texName[i] = '\0';
-					break;
-				}
-				texName[i] = (char) tch;
-			}
-			texName[_tcslen(name)] = '\0';
+			//convert file name into a C symbol name
+			char *texName = PtcFileNameToCSymbolName(opt.srcFiles[0]);
 
 			//if texture name doesn't start with a letter, prepend "tex_" to its name.
 			char *prefix = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "tex_" : "";
@@ -2275,39 +2323,27 @@ int _tmain(int argc, TCHAR **argv) {
 			nameBuffer[_tcslen(nameBuffer) - 1] = _T('h');
 			FILE *fpHeader = PtcOpenFileForWrite(nameBuffer);
 			
-			fprintf(fp, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(opt.texFmt),
-				texture.palette.nColors, TEXW(texture.texels.texImageParam), height);
-			fprintf(fp, "#include <stdint.h>\n\n");
-			
-			fprintf(fpHeader, texHeader, texName, month, day, year, hour, minute, am ? 'A' : 'P', TxNameFromTexFormat(opt.texFmt),
-				texture.palette.nColors, TEXW(texture.texels.texImageParam), height);
-			fprintf(fpHeader, "#pragma once\n\n#include <stdint.h>\n\n");
+			PtcBeginEmitSourceFileHeading(fp, fpHeader, texName);
+			fprintf(fp,       texHeader, TxNameFromTexFormat(opt.texFmt), texture.palette.nColors, TEXW(texture.texels.texImageParam), height);
+			fprintf(fpHeader, texHeader, TxNameFromTexFormat(opt.texFmt), texture.palette.nColors, TEXW(texture.texels.texImageParam), height);
+			PtcEndEmitSourceFileHeading(fp, fpHeader);
 
 			//write texel
 			{
-				fprintf(fpHeader, "//\n// Generated texel data\n//\n");
-				PtcEmitTextData(fp, fpHeader, prefix, texName, "_texel", texture.texels.texel, texelSize, 2, opt.compressionPolicy);
-				
-				fprintf(fp, "\n");
-				fprintf(fpHeader, "\n");
+				PtcEmitTextData(fp, fpHeader, prefix, texName, "_texel", "texel",
+					texture.texels.texel, texelSize, 2, opt.compressionPolicy);
 			}
 
 			//write index
 			if (opt.texFmt == GX_TEXFMT_TEX4x4) {
-				fprintf(fpHeader, "//\n// Generated index data\n//\n");
-				PtcEmitTextData(fp, fpHeader, prefix, texName, "_idx", texture.texels.cmp, indexSize, 2, opt.compressionPolicy);
-				
-				fprintf(fp, "\n");
-				fprintf(fpHeader, "\n");
+				PtcEmitTextData(fp, fpHeader, prefix, texName, "_idx", "index",
+					texture.texels.cmp, indexSize, 2, opt.compressionPolicy);
 			}
 
 			//write palette
 			if (opt.texFmt != GX_TEXFMT_DIRECT && opt.fixedPalette == NULL) {
-				fprintf(fpHeader, "//\n// Generated palette data\n//\n");
-				PtcEmitTextData(fp, fpHeader, prefix, texName, "_pal", texture.palette.pal, texture.palette.nColors * 2, 2, opt.compressionPolicy);
-				
-				fprintf(fp, "\n");
-				fprintf(fpHeader, "\n");
+				PtcEmitTextData(fp, fpHeader, prefix, texName, "_pal", "palette",
+					texture.palette.pal, texture.palette.nColors * sizeof(COLOR), sizeof(COLOR), opt.compressionPolicy);
 			}
 			
 			fclose(fp);
@@ -2321,6 +2357,102 @@ int _tmain(int argc, TCHAR **argv) {
 		}
 		
 		free(px);
+	} else {
+		//palette gen mode
+		char *plttName = PtcFileNameToCSymbolName(opt.srcFiles[0]);
+
+		//if texture name doesn't start with a letter, prepend "pal_" to its name.
+		char *prefix = ((plttName[0] < 'a' || plttName[0] > 'z') && (plttName[0] < 'A' || plttName[0] > 'Z')) ? "pal_" : "";
+
+		//infer color-0 mode
+		if (opt.c0xp == -1) opt.c0xp = hasTransparent;
+
+		//default palette size: assume palette for palette256 texture by default
+		if (opt.nMaxColors == -1) opt.nMaxColors = 256;
+
+		unsigned int nCol = opt.nMaxColors;
+		PTC_FAIL_IF(nCol > RX_PALETTE_MAX_SIZE, _T("Palette size %d too large. Must be %d or fewer.\n"), 
+			nCol, RX_PALETTE_MAX_SIZE);
+
+		COLOR32 *pltt = (COLOR32 *) calloc(nCol, sizeof(COLOR32));
+		
+		RxReduction *reduction = RxNew(&opt.balance);
+
+		RxFlag flag = RX_FLAG_NO_WRITEBACK | RX_FLAG_NO_ALPHA_DITHER;
+		if (opt.c0xp) flag |= RX_FLAG_ALPHA_MODE_RESERVE;
+		else          flag |= RX_FLAG_ALPHA_MODE_NONE;
+		RxApplyFlags(reduction, flag);
+			
+		//build histogram and create the palette
+		for (int i = 0; i < opt.nSrcFile; i++) {
+			RxHistAdd(reduction, images[i].px, images[i].width, images[i].height);
+		}
+		RxHistFinalize(reduction);
+		RxComputePalette(reduction, nCol - (opt.c0xp ? 1 : 0));
+		RxSortPalette(reduction, RX_FLAG_SORT_ONLY_USED | RX_FLAG_SORT_END_DIFFER);
+		RxGetPalette(reduction, pltt, 0);
+		RxFree(reduction);
+
+		COLOR *pltt15 = (COLOR *) calloc(nCol, sizeof(COLOR));
+		for (unsigned int i = 0; i < nCol; i++) pltt15[i] = ColorConvertToDS(pltt[i]);
+		free(pltt);
+
+		TCHAR *filename = NULL;
+		switch (opt.outMode) {
+			case PTC_OUT_MODE_BINARY:
+				filename = PtcSuffixFileName(opt.outBase, NTFP_EXTENSION);
+				break;
+			case PTC_OUT_MODE_C:
+				filename = PtcSuffixFileName(opt.outBase, _T(".c"));
+				break;
+			case PTC_OUT_MODE_NNS:
+				filename = PtcSuffixFileName(opt.outBase, _T(".NCLR"));
+				break;
+			default:
+				PTC_FAIL_IF(1, _T("Invalid output mode for palette."));
+				break;
+		}
+		FILE *fp = PtcOpenFileForWrite(filename);
+
+		switch (opt.outMode) {
+			case PTC_OUT_MODE_BINARY:
+			{
+				PtcEmitBinaryData(fp, pltt15, nCol * sizeof(COLOR), opt.compressionPolicy);
+				break;
+			}
+			case PTC_OUT_MODE_C:
+			{
+				TCHAR *headerName = PtcSuffixFileName(opt.outBase, _T(".h"));
+				FILE *fpHeader = PtcOpenFileForWrite(headerName);
+				
+				PtcBeginEmitSourceFileHeading(fp, fpHeader, plttName);
+				fprintf(fp,       plttHeader, nCol);
+				fprintf(fpHeader, plttHeader, nCol);
+				PtcEndEmitSourceFileHeading(fp, fpHeader);
+				
+				//write palette
+				PtcEmitTextData(fp, fpHeader, prefix, plttName, "_pal", "palette",
+					pltt15, nCol * sizeof(COLOR), sizeof(COLOR), opt.compressionPolicy);
+				
+				fclose(fpHeader);
+				PtcPrintFileWritten(headerName);
+				free(headerName);
+				break;
+			}
+			case PTC_OUT_MODE_NNS:
+			{
+				PtcWriteNclr(fp, pltt15, nCol, 8, BGGEN_BGTYPE_TEXT_256x1, 0, 0);
+				break;
+			}
+			default:
+				break;
+		}
+
+		fclose(fp);
+		PtcPrintFileWritten(filename);
+		free(plttName);
+		free(pltt15);
+		free(filename);
 	}
 
 	return 0;
