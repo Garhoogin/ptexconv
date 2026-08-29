@@ -204,6 +204,7 @@ static const char *g_helpString = ""
 	"\n"
 	"Color Palette Options:\n"
 	"   -onns   Output as NCLR\n"
+	"   -f  <f> Specify texture format {palette4, palette16, palette256, a3i5, a5i3}\n"
 	"   -t0x    Color 0 is transparent     (default: inferred)\n"
 	"   -t0o    Color 0 is not transparent (default: inferred)\n"
 	"\n"
@@ -2018,16 +2019,12 @@ int _tmain(int argc, TCHAR **argv) {
 
 			if (!opt.screenExclusive) {
 				//write character
-				{
-					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_char", "character",
-						chars, charSize, 2, opt.compressionPolicy);
-				}
+				PtcEmitTextData(fp, fpHeader, prefix, bgName, "_char", "character",
+					chars, charSize, 2, opt.compressionPolicy);
 
 				//write palette
-				{
-					PtcEmitTextData(fp, fpHeader, prefix, bgName, "_pal", "palette",
-						pal, paletteOutSize * sizeof(COLOR), sizeof(COLOR), opt.compressionPolicy);
-				}
+				PtcEmitTextData(fp, fpHeader, prefix, bgName, "_pal", "palette",
+					pal, paletteOutSize * sizeof(COLOR), sizeof(COLOR), opt.compressionPolicy);
 			}
 
 			if (opt.outputScreen) {
@@ -2329,10 +2326,8 @@ int _tmain(int argc, TCHAR **argv) {
 			PtcEndEmitSourceFileHeading(fp, fpHeader);
 
 			//write texel
-			{
-				PtcEmitTextData(fp, fpHeader, prefix, texName, "_texel", "texel",
-					texture.texels.texel, texelSize, 2, opt.compressionPolicy);
-			}
+			PtcEmitTextData(fp, fpHeader, prefix, texName, "_texel", "texel",
+				texture.texels.texel, texelSize, 2, opt.compressionPolicy);
 
 			//write index
 			if (opt.texFmt == GX_TEXFMT_TEX4x4) {
@@ -2364,11 +2359,37 @@ int _tmain(int argc, TCHAR **argv) {
 		//if texture name doesn't start with a letter, prepend "pal_" to its name.
 		char *prefix = ((plttName[0] < 'a' || plttName[0] > 'z') && (plttName[0] < 'A' || plttName[0] > 'Z')) ? "pal_" : "";
 
-		//infer color-0 mode
-		if (opt.c0xp == -1) opt.c0xp = hasTransparent;
+		//check texture mode
+		PTC_FAIL_IF(opt.texFmt == GX_TEXFMT_DIRECT, _T("The direct texture format is not applicable.\n"));
+		PTC_FAIL_IF(opt.texFmt == GX_TEXFMT_TEX4x4, _T("The tex4x4 texture format is unsunpported for this mode.\n"));
 
-		//default palette size: assume palette for palette256 texture by default
-		if (opt.nMaxColors == -1) opt.nMaxColors = 256;
+		//check the texture format mode
+		if (opt.texFmt == -1) opt.texFmt = GX_TEXFMT_PLTT256;
+		int translucent = (opt.texFmt == GX_TEXFMT_A3I5 || opt.texFmt == GX_TEXFMT_A5I3);
+
+		//determine max colors for format
+		int maxCols = 256;
+		switch (opt.texFmt) {
+			case GX_TEXFMT_PLTT4   : maxCols =     4; break;
+			case GX_TEXFMT_PLTT16  : maxCols =    16; break;
+			case GX_TEXFMT_PLTT256 : maxCols =   256; break;
+			case GX_TEXFMT_A3I5    : maxCols =    32; break;
+			case GX_TEXFMT_A5I3    : maxCols =     8; break;
+			case GX_TEXFMT_TEX4x4  : maxCols = 32768; break;
+		}
+
+		//default palette size
+		if (opt.nMaxColors == -1 || opt.nMaxColors > maxCols) {
+			if (opt.nMaxColors != -1) PtcPrint(PTC_LEVEL_WARN, _T("Color count truncated to %d.\n"), maxCols);
+			opt.nMaxColors = maxCols;
+		}
+		
+		//infer color-0 mode
+		if (opt.texFmt == GX_TEXFMT_PLTT4 || opt.texFmt == GX_TEXFMT_PLTT16 || opt.texFmt == GX_TEXFMT_PLTT256) {
+			if (opt.c0xp == -1) opt.c0xp = hasTransparent;
+		} else {
+			opt.c0xp = 0;
+		}
 
 		unsigned int nCol = opt.nMaxColors;
 		PTC_FAIL_IF(nCol > RX_PALETTE_MAX_SIZE, _T("Palette size %d too large. Must be %d or fewer.\n"), 
@@ -2379,8 +2400,9 @@ int _tmain(int argc, TCHAR **argv) {
 		RxReduction *reduction = RxNew(&opt.balance);
 
 		RxFlag flag = RX_FLAG_NO_WRITEBACK | RX_FLAG_NO_ALPHA_DITHER;
-		if (opt.c0xp) flag |= RX_FLAG_ALPHA_MODE_RESERVE;
-		else          flag |= RX_FLAG_ALPHA_MODE_NONE;
+		if      (translucent) flag |= RX_FLAG_ALPHA_MODE_PIXEL;
+		else if (opt.c0xp   ) flag |= RX_FLAG_ALPHA_MODE_RESERVE;
+		else                  flag |= RX_FLAG_ALPHA_MODE_NONE;
 		RxApplyFlags(reduction, flag);
 			
 		//build histogram and create the palette
