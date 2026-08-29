@@ -1,13 +1,14 @@
 # ptexconv
 
-This is the command line version of the background and texture converson functioanlity of NitroPaint. It can output textures in all of the DS's texture formats, as well as output Text mode BGs in 4 and 8 bit depth.
+This is the command line version of the background and texture conversion functionality of NitroPaint. It can output textures in all of the DS's texture formats, as well as output Text, Affine, Affine Extended, and Bitmap mode BGs.
 
-## Commane Line Usage
+## Command Line Usage
 
     Usage: ptexconv <option...> image [option...]
   	Global options:
   	   -gb     Generate BG (default)
   	   -gt     Generate texture
+       -gp     Generate palette
   	   -o      Specify output base name
   	   -ob     Output binary (default)
   	   -oc     Output as C header file
@@ -46,11 +47,17 @@ This is the command line version of the background and texture converson functio
        -ct <n> Set tex4x4 palette compression strength [0, 100] (default 0).
   	   -ot     Output as NNS TGA
        -tt     Trim the texture in the T axis if its height is not a power of 2
-       -t0x    Color 0 is transparent (defuault: inferred)
+       -t0x    Color 0 is transparent (default: inferred)
        -t0o    Color 0 is opaque      (default: inferred)
        -da     Apply dithering in the alpha  channel (a3i5, a5i3)
        -fp <f> Specify fixed palette file
        -fpo    Outputs the fixed palette among other output files when used
+       
+    Color Palette Options:
+       -onns   Output as NCLR
+       -f  <f> Specify texture format {palette4, palette16, palette256, a3i5, a5i3}
+       -t0x    Color 0 is transparent     (default: inferred)
+       -to0    Color 0 is not transparent (default: inferred)
 
     Compression Options:
        -cbios  Enable use of all BIOS compression types (valid for binary, C, GRF)
@@ -114,10 +121,21 @@ When using palette4, palette16 or palette256 texture formats, color index 0 is m
 
 The texture conversion allows for the creation of palette swap textures in select formats (palette4, palette16, and palette256). In this mode, multiple images (up to 16) may be input, and the output of conversion is a single texture with multiple palettes. Each input image must have the same dimensions. When the output is raw binary data, each palette is output as a separate file, while in other formats the palettes are concatenated in the order specified by the command line arguments. Enable this mode by specifying more than one input image on the command line.
 
+## Color Palette Options
+ptexconv also allows creating only a color palette from one or more input images. The resulting color palette may be used in a subsequent call to implement shared palette usage across multiple textures or BGs.
+
+The command line interface of the color palette generator is a subset of those used by the texture conversion. Like with texture conversion, use the `-f` flag to specify the texture format. Note that texture data is not produced. The texture format specified sets the assumptions of maximum color count and handling of the alpha channel when creating palette data. The `direct` format is not applicable, and `tex4x4` is presently not supported in this mode. By default, `palette256` is selected.
+
+Use the `-t0o` and `-t0x` flags in the same way as the texture generator. When the texture format is `palette4`, `palette16`, or `palette256`, these flags are applicable. Specifying `-t0x` causes the first color of the palette to be reserved for transparency. When the texture format is specified as `a3i5` or `a5i3`, these flags have no effect. When neither flag is specified, the color-0 mode is decided automatically based on the presence of transparent pixels in the input images. If at least one image in the input list contains transparent pixels, then color-0 transparency mode is enabled.
+
+Specify the number of colors to generate using the `-cm` flag. The number of colors will be limited by the selected texture format (e.g. the color count is truncated to 256 when the `palette256` format is selected).
+
+Output formats supported are raw binary, C source files, and NCLR files. If the output palette is to be used by a subsequent call to ptexconv, then the output should be raw binary and not compressed.
+
 ## Compression Options
 By default, output files are not compresed. Compression settings are valid for binary files, C source files, and GRF files. For C source files, the compression is applied to the data before writing C source output. For binary files, the whole file is compressed. For GRF files, the file's binary blocks are independently compressed.
 
-By default, no compression is used. For C and binary output, this means files are output exactly as they should be copied to VRAM. For GRF files, since a compression header is required for binary blocks, a dummy compression is used (as thought `-cno` was specified). 
+By default, no compression is used. For C and binary output, this means files are output exactly as they should be copied to VRAM. For GRF files, since a compression header is required for binary blocks, a dummy compression is used (as though `-cno` was specified). 
 
 ptexconv uses a system of opt-in compression. Specifying a compression type on the command line opts in that compression type for output. When multiple compression types are opted in, ptexconv selects the smallest one. 
 
