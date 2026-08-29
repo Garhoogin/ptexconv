@@ -31,7 +31,7 @@ jobs:
           - name: Linux_ARM64
             exe_target: aarch64-linux-gnu
             lib_target: aarch64-linux-musl
-            image: ubuntu-24.04-arm
+            image: ubuntu-latest
           - name: macOS_x64
             exe_target: x86_64-macos
             lib_target: x86_64-macos
