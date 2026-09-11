@@ -380,7 +380,7 @@ static void PtcReconcileMultiImageAlpha(PtcImage *images, unsigned int n) {
 				unsigned int a = (images[i].px[x + y * width] >> 24);
 				aTotal += a;
 				
-				if (a == 0) hasZeroAlpha = 0;
+				if (a == 0) hasZeroAlpha = 1;
 			}
 			
 			if (hasZeroAlpha) aTotal = 0;
@@ -1073,7 +1073,7 @@ static uint16_t PtcSampleBgScreenData(const void *scr, int bgType, unsigned int 
 			//get panel dimensions
 			unsigned int nPnlX = (nTileX + 31) / 32, nPnlY = (nTileY + 31) / 32;
 			
-			unsigned int tileX = iTile % nTileX, tileY = iTile / nTileY;
+			unsigned int tileX = iTile % nTileX, tileY = iTile / nTileX;
 			unsigned int pnlX = tileX / 32, pnlY = tileY / 32;  // which panel
 			
 			//how many BG tiles are in a full panel row
