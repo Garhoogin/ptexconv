@@ -2240,15 +2240,9 @@ static void PtcConvBG(PtcOptions *opt, PtcImage *images, int hasTransparent) {
 	//determine palette size for output
 	int paletteOutBase = 0, paletteOutSize = depth == 4 ? 256 : ((opt->paletteBase + opt->nPalettes) * 256);
 	if (opt->compressPalette) {
-		if (opt->nPalettes == 1) {
-			//output only the subsection of the palette written to
-			paletteOutBase = opt->paletteOffset + (opt->paletteBase << depth);
-			paletteOutSize = opt->nMaxColors;
-		} else {
-			//include whole palettes, but only those written to
-			paletteOutBase = opt->paletteBase << depth;
-			paletteOutSize = opt->nPalettes << depth;
-		}
+		//include whole palettes, but only those written to
+		paletteOutBase = opt->paletteBase << depth;
+		paletteOutSize = opt->nPalettes << depth;
 	}
 
 	//initialize palette. Read in base palette if specified.
