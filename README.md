@@ -40,12 +40,12 @@ This is the command line version of the background and texture conversion functi
   	   -wc <f> Use or append to an existing character file (binary only)
   	   -ns     Do not output screen data
   	   -se     Output screen only. Requires -wp and -wc (will not modify).
-  	   -od     Output as DIB (disables character compression)
+  	   -od     Output as DIB
   	
   	Texture Options:
   	   -f      Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}
        -ct <n> Set tex4x4 palette compression strength [0, 100] (default 0).
-  	   -ot     Output as NNS TGA
+  	   -onns   Output as NNS TGA
        -tt     Trim the texture in the T axis if its height is not a power of 2
        -t0x    Color 0 is transparent (default: inferred)
        -t0o    Color 0 is opaque      (default: inferred)
@@ -75,7 +75,7 @@ The general options contain switches that may be useful regardless if you are ge
 
 Also among the general options are those for controlling palette creation and indexing. Use the `-d` switch followed by a diffusion percentage (0-100) to specify the dithering level on the output image. Floyd-Steinberg dithering with a serpentine pattern is employed for this. To more specifically control the color reduction process, use the `-bb` and `-bc` followed by a number between 1 and 39 (default is 20 for both). These options control the Lightness-Color and Red-Green weighting respectively. Lastly, use the `be` switch to have palette generation try to favor gradient colors more strongly.
 
-Last among the general options are `-s` which causes the program not to output any text unless in the case of a failure, and `-h` which prints the above usage information without processing any conversions.
+Last among the general options are `-v` which causes the program not emit informational text, and `-h` which prints the above usage information without processing any conversions.
 
 ## BG Conversion Options
 First and foremost, the `-bt4`, `-bt8`, `-ba`, `-bA`, and `-bB` switches set the BG format of the output. These specify the following BG formats:
@@ -97,10 +97,10 @@ BG conversion may use color 0 as an opaque color slot. By default, color 0 is re
 
 BG conversion also allows for using existing graphics data to create screen files from a source image. Use the `-se` option to generate a screen file exclusively. This option requires specifying palette and character graphics files with the `-wp` and `-wc` options. With `-se` enabled, however, these files are not written to, only read from. The only output file will be the resulting screen file.
 
-Lastly, to do BG color reduction but output as a standard BMP file, use the `-od` option. This will produce an indexed BMP file with the same palette layout as would have been output otherwise. This option disables character compression.
+Lastly, to do BG color reduction but output as a standard BMP file, use the `-od` option. This will produce an indexed BMP file with the same palette layout as would have been output otherwise. Though no BG screen data is output, character compression is still enabled by default. The resulting output file will be rendered as though from the produced BG screen data. As such, the output is subject to the contraints of the selected background format.
 
 ## Texture Conversion Options
-Texture conversion has a couple switches of its own. Use `-f` followed by a format name (or number) to select a texture format to use. Use the `-fp` option followed by a path to a (raw) palette file to instruct the program to use this palette file when generating texture data. Lastly, the `-ot` option tells ptexconv to output a file as an NNS TGA file (for use with NNS plugins).
+Texture conversion has a couple switches of its own. Use `-f` followed by a format name (or number) to select a texture format to use. Use the `-fp` option followed by a path to a (raw) palette file to instruct the program to use this palette file when generating texture data. Lastly, the `-onns` option tells ptexconv to output a file as an NNS TGA file (for use with NNS plugins).
 
 The options for texture format are summarized:
 | Format     | Bit Depth | Max Palette Colors | Transparency |
