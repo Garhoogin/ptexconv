@@ -30,6 +30,7 @@
 #   define _vftprintf vfprintf
 #   define _tcslen    strlen
 #   define _tcsdup    strdup
+#   define _tcschr    strchr
 #   define _tcsrchr   strrchr
 #   define _ttoi      atoi
 #endif
