@@ -700,6 +700,13 @@ static char *PtcFileNameToCSymbolName(const TCHAR *filename) {
 
 // ----- file output routines
 
+static void PtcPrintInputMessage(PtcOptions *opt) {
+	PtcPrint(PTC_LEVEL_INFO, _T("INPUT   : %d bitmap") MB_STR _T("\n"), opt->nSrcFile, opt->nSrcFile > 1 ? "s" : "");
+	for (int i = 0; i < opt->nSrcFile; i++) {
+		PtcPrint(PTC_LEVEL_INFO, _T("          [%d] ") TC_STR _T("\n"), i, opt->srcFiles[i]);
+	}
+}
+
 static void PtcPrintFileWritten(const TCHAR *path) {
 	PtcPrint(PTC_LEVEL_INFO, _T("Wrote ") TC_STR _T("\n"), path);
 }
@@ -1064,6 +1071,34 @@ static void *PtcConvertBgScreenData(const uint16_t *src, unsigned int tilesX, un
 			return NULL;
 		}
 	}
+}
+
+static int PtcIsBgFreeSize(int bgType, unsigned int width, unsigned int height) {
+	switch (bgType) {
+		case BGGEN_BGTYPE_TEXT_16x16:
+		case BGGEN_BGTYPE_TEXT_256x1:
+			if (width ==  256 && height ==  256) return 0;
+			if (width ==  256 && height ==  512) return 0;
+			if (width ==  512 && height ==  256) return 0;
+			if (width ==  512 && height ==  512) return 0;
+			break;
+		case BGGEN_BGTYPE_AFFINE_256x1:
+		case BGGEN_BGTYPE_AFFINEEXT_256x16:
+			if (width ==  128 && height ==  128) return 0;
+			if (width ==  256 && height ==  256) return 0;
+			if (width ==  512 && height ==  512) return 0;
+			if (width == 1024 && height == 1024) return 0;
+			break;
+		case BGGEN_BGTYPE_BITMAP:
+			if (width ==  128 && height ==  128) return 0;
+			if (width ==  256 && height ==  256) return 0;
+			if (width ==  512 && height ==  256) return 0;
+			if (width ==  512 && height ==  512) return 0;
+			if (width ==  512 && height == 1024) return 0;  // large bitmap type
+			if (width == 1024 && height ==  512) return 0;  // large bitmap type
+			break;
+	}
+	return 1;
 }
 
 static uint16_t PtcSampleBgScreenData(const void *scr, int bgType, unsigned int nTileX, unsigned int nTileY, unsigned int iTile) {
@@ -2284,8 +2319,40 @@ static void PtcConvBG(PtcOptions *opt, PtcImage *images, int hasTransparent) {
 		if (!opt->explicitCharBase) opt->charBase = nExistingChars;
 	}
 	
-	PtcPrint(PTC_LEVEL_INFO, _T("Generating BG\nBits: %d\nPalettes: %d\nPalette size: %d\nMax chars: %d\nPalette base: %d\n\n"),
-		depth, opt->nPalettes, opt->nMaxColors, opt->nMaxChars, opt->paletteBase);
+	char bgFormatBuf[64] = { 0 };
+	char sizeInfoBuf[64] = { 0 };
+
+	switch (opt->bgType) {
+		case BGGEN_BGTYPE_TEXT_16x16:
+		case BGGEN_BGTYPE_TEXT_256x1:
+			sprintf(bgFormatBuf, "character - %s %dx%d", "text", 1 << depth, maxPltt);
+			break;
+		case BGGEN_BGTYPE_AFFINE_256x1:
+			sprintf(bgFormatBuf, "character - %s %dx%d", "affine", 1 << depth, maxPltt);
+			break;
+		case BGGEN_BGTYPE_AFFINEEXT_256x16:
+			sprintf(bgFormatBuf, "character - %s %dx%d", "affine ext", 1 << depth, maxPltt);
+			break;
+		case BGGEN_BGTYPE_BITMAP:
+			sprintf(bgFormatBuf, "bitmap - %d-bit indexed", depth);
+			break;
+	}
+	
+	if (PtcIsBgFreeSize(opt->bgType, images[0].width, images[0].height)) {
+		sprintf(sizeInfoBuf, " (free-size)");
+	}
+
+	PtcPrint(PTC_LEVEL_INFO, _T("\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("BG Conversion\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrintInputMessage(opt);
+	PtcPrint(PTC_LEVEL_INFO, _T("SIZE    : %dx%d") MB_STR _T("\n"), images[0].width, images[0].height, sizeInfoBuf);
+	PtcPrint(PTC_LEVEL_INFO, _T("FORMAT  : ") MB_STR _T("\n"), bgFormatBuf);
+	PtcPrint(PTC_LEVEL_INFO, _T("PALETTE : %d colors x %d pltt\n"), opt->nMaxColors, opt->nPalettes);
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("\n"));
+
 
 	//perform appropriate generation of data.
 	unsigned char *chars = NULL;
@@ -2449,8 +2516,20 @@ static void PtcConvTexture(PtcOptions *opt, PtcImage *images, int hasTransparent
 		opt->nMaxColors = colorMaxes[opt->texFmt];
 		PtcPrint(PTC_LEVEL_WARN, _T("Color count truncated to %d.\n"), opt->nMaxColors);
 	}
-	PtcPrint(PTC_LEVEL_INFO, _T("Generating texture\nMax colors: %d\nFormat: ") MB_STR _T("\nSize: %dx%d\n\n"),
-		opt->nMaxColors, TxNameFromTexFormat(opt->texFmt), width, height);
+
+	char plttInfoBuf[32] = { 0 };
+	if (opt->c0xp) sprintf(plttInfoBuf, " (color-0 transparency mode)");
+
+	PtcPrint(PTC_LEVEL_INFO, _T("\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("Texture Conversion\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrintInputMessage(opt);
+	PtcPrint(PTC_LEVEL_INFO, _T("SIZE    : %dx%d\n"), width, height);
+	PtcPrint(PTC_LEVEL_INFO, _T("FORMAT  : ") MB_STR _T("\n"), TxNameFromTexFormat(opt->texFmt));
+	PtcPrint(PTC_LEVEL_INFO, _T("PALETTE : %d colors") MB_STR _T("\n"), opt->nMaxColors, plttInfoBuf);
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("\n"));
 
 	TEXTURE texture = { 0 };
 	
@@ -2632,6 +2711,19 @@ static void PtcConvPalette(PtcOptions *opt, PtcImage *images, int hasTransparent
 	unsigned int nCol = opt->nMaxColors;
 	PTC_FAIL_IF(nCol > RX_PALETTE_MAX_SIZE, _T("Palette size %d too large. Must be %d or fewer.\n"), 
 		nCol, RX_PALETTE_MAX_SIZE);
+
+	char plttInfoBuf[32] = { 0 };
+	if (opt->c0xp) sprintf(plttInfoBuf, " (color-0 transparency mode)");
+
+	PtcPrint(PTC_LEVEL_INFO, _T("\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("Palette Generation\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrintInputMessage(opt);
+	PtcPrint(PTC_LEVEL_INFO, _T("FORMAT  : ") MB_STR _T("\n"), TxNameFromTexFormat(opt->texFmt));
+	PtcPrint(PTC_LEVEL_INFO, _T("PALETTE : %d colors") MB_STR _T("\n"), opt->nMaxColors, plttInfoBuf);
+	PtcPrint(PTC_LEVEL_INFO, _T("---------------------------------------------------------------------\n"));
+	PtcPrint(PTC_LEVEL_INFO, _T("\n"));
 
 	COLOR32 *pltt = (COLOR32 *) calloc(nCol, sizeof(COLOR32));
 	
