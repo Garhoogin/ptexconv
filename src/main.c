@@ -160,6 +160,7 @@ static const char *g_helpString = ""
 	"   -gb     Generate BG (default)\n"
 	"   -gt     Generate texture\n"
 	"   -gp     Generate color palette\n"
+        "   -i  <f> Specify an input file (optional for names without leading '-')\n"
 	"   -o      Specify output base name\n"
 	"   -ob     Output binary (default)\n"
 	"   -oc     Output as C header file\n"
@@ -1235,6 +1236,14 @@ static void *PtcPadBuffer(void *buf, unsigned int size, unsigned int newSize) {
 }
 
 
+static void PtcAddInputFile (PtcOptions *opt, const TCHAR *name) {
+	//add input file
+	PTC_FAIL_IF(opt->nSrcFile >= PTC_INFILE_MAX, _T("The number of input files (%d) exceeds the maximum allowed (%d).\n"),
+		opt->nSrcFile, PTC_INFILE_MAX);
+	
+	opt->srcFiles[opt->nSrcFile++] = _tcsdup(name);
+}
+
 
 // ----- main command line routine
 
@@ -1274,6 +1283,11 @@ static void PtcSwitch_v(PtcOptions *options, TCHAR **argv) {
 static void PtcSwitch_o(PtcOptions *options, TCHAR **argv) {
 	//set output base file name
 	options->outBase = argv[0];
+}
+
+static void PtcSwitch_i(PtcOptions *options, TCHAR **argv) {
+	//add input file name
+	PtcAddInputFile(options, argv[0]);
 }
 
 static void PtcSwitch_k(PtcOptions *options, TCHAR **argv) {
@@ -1637,6 +1651,7 @@ static const PtcSwitch sSwitches[] = {
 	{ _T("h"),     0, PtcSwitch_h  },
 	{ _T("s") ,    0, PtcSwitch_s  },
 	{ _T("v") ,    0, PtcSwitch_v  },
+	{ _T("i") ,    1, PtcSwitch_i  },
 	{ _T("o") ,    1, PtcSwitch_o  },
 	{ _T("k") ,    1, PtcSwitch_k  },
 	{ _T("d") ,    1, PtcSwitch_d  },
@@ -1784,10 +1799,7 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 			
 		} else {
 			//add input file
-			PTC_FAIL_IF(opt->nSrcFile >= PTC_INFILE_MAX, _T("The number of input files (%d) exceeds the maximum allowed (%d).\n"),
-				opt->nSrcFile, PTC_INFILE_MAX);
-			
-			opt->srcFiles[opt->nSrcFile++] = arg;
+			PtcAddInputFile(opt, arg);
 		}
 	}
 }
