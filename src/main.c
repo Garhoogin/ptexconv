@@ -1435,6 +1435,11 @@ static void PtcSwitch_c8(PtcOptions *options, TCHAR **argv) {
 static void PtcSwitch_b(PtcOptions *options, TCHAR **argv) {
 	//LEGACY: bit depth select (4bpp -> text 16x16, 8bpp -> affine ext 256x16)
 	int nBit = _ttoi(argv[0]);
+	PtcPrint(PTC_LEVEL_WARN, _T("Using deprecated switch '-b %d'. Use '") MB_STR _T("'.\n"),
+		nBit,
+		nBit == 4 ? "-bt4" : "-bA");
+
+	//assume compatibility with the old versions: 4-bit assumed text, 8-bit assumed affine extended.
 	if      (nBit == 4) options->bgType = BGGEN_BGTYPE_TEXT_16x16;
 	else if (nBit == 8) options->bgType = BGGEN_BGTYPE_AFFINEEXT_256x16;
 	else                PtcPrint(PTC_LEVEL_STOP, _T("The bit depth is invalid (%d). Valid values are 4,8.\n"), nBit);
