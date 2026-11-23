@@ -124,6 +124,7 @@ typedef struct PtcOptions_ {
 	int trimT;               // Trim texture data on T axis
 	int noLimitPaletteSize;  // Limit palette size for tex4x4 conversion
 	int tex4x4Threshold;     // Palette merge threshold for tex4x4 conversion
+	char *pnam;              // Palette name
 } PtcOptions;
 
 
@@ -194,16 +195,18 @@ static const char *g_helpString = ""
 	"   -onns   Output as NNS binary data\n"
 	"\n"
 	"Texture Options:\n"
-	"   -f  <f> Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4, direct}\n"
+	"   -f  <f> Specify format {palette4, palette16, palette256, a3i5, a5i3, tex4x4,\n"
+	"           direct}\n"
 	"   -cn     Do not limit output palette size for tex4x4 conversion\n"
 	"   -ct <n> Set tex4x4 palette compresion strength [0, 100] (default 0).\n"
 	"   -onns   Output as NNS TGA\n"
 	"   -tt     Trim the texture in the T axis if its height is not a power of 2\n"
 	"   -t0x    Color 0 is transparent     (default: inferred)\n"
 	"   -t0o    Color 0 is not transparent (default: inferred)\n"
-	"   -da     Apply dithering in the alpha  channel (a3i5, a5i3)\n"
+	"   -da     Apply dithering in the alpha channel (a3i5, a5i3)\n"
 	"   -fp <f> Specify fixed palette file\n"
 	"   -fpo    Outputs the fixed palette among other output files when used\n"
+	"   -pn <s> Set the texture palette name (for NNS TGA).\n"
 	"\n"
 	"Color Palette Options:\n"
 	"   -onns   Output as NCLR\n"
@@ -1613,6 +1616,16 @@ static void PtcSwitch_da(PtcOptions *options, TCHAR **argv) {
 	options->ditherAlpha = 1;
 }
 
+static void PtcSwitch_pn(PtcOptions *options, TCHAR **argv) {
+	//set palette name
+	free(options->pnam);
+
+	const TCHAR *tname = argv[0];
+	unsigned int len = _tcslen(tname);
+	options->pnam = calloc(len + 1, 1);
+	for (unsigned int i = 0; i < len + 1; i++) options->pnam[i] = (char) tname[i];
+}
+
 
 static const PtcSwitch sSwitches[] = {
 	// ----- Global switches
@@ -1679,7 +1692,8 @@ static const PtcSwitch sSwitches[] = {
 	{ _T("tt"),    0, PtcSwitch_tt  },
 	{ _T("t0o"),   0, PtcSwitch_t0o },
 	{ _T("t0x"),   0, PtcSwitch_t0x },
-	{ _T("da"),    0, PtcSwitch_da  }
+	{ _T("da"),    0, PtcSwitch_da  },
+	{ _T("pn"),    1, PtcSwitch_pn  }
 };
 
 static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
@@ -2548,8 +2562,8 @@ static void PtcConvTexture(PtcOptions *opt, PtcImage *images, int hasTransparent
 		params.px = images[0].px;
 		params.c0xp = opt->c0xp;
 		params.threshold = opt->tex4x4Threshold;
+		params.pnam = strdup(opt->pnam);
 		memcpy(&params.balance, &opt->balance, sizeof(opt->balance));
-		params.pnam = (char *) calloc(1, 1);
 		
 		//read the fixed palette file, if one was specified
 		if (opt->fixedPalette != NULL) {
@@ -2627,7 +2641,7 @@ static void PtcConvTexture(PtcOptions *opt, PtcImage *images, int hasTransparent
 		texture.texels.cmp = NULL;
 		texture.texels.texImageParam = texImageParam;
 		
-		texture.palette.name = strdup("");
+		texture.palette.name = strdup(opt->pnam);
 		texture.palette.nColors = opt->nSrcFile * opt->nMaxColors;
 		texture.palette.pal = (COLOR *) calloc(texture.palette.nColors, sizeof(COLOR));
 		for (int i = 0; i < opt->nSrcFile * opt->nMaxColors; i++) {
