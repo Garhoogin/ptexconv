@@ -165,29 +165,48 @@ static unsigned int CxiLzSearch(CxiLzState *state, unsigned int *pDistance) {
 	unsigned int distance = firstMatch + 1;
 	unsigned int bestLength = 1, bestDistance = 0;
 
-	unsigned int nMaxCompare = state->maxLength;
-	if (nMaxCompare > nBytesLeft) nMaxCompare = nBytesLeft;
+	//check if we may be in an RL region. We start in an RL region if the initial
+	//match distance is 1. Note that even when a matching distance of 1 is not
+	//allowed, we still start here.
+	int rlRun = distance == 1;
+
+	//clamp the max length by the number of bytes remaining
+	unsigned int maxLength = state->maxLength;
+	if (maxLength > nBytesLeft) maxLength = nBytesLeft;
 
 	//search backwards
 	const unsigned char *curp = state->buffer + state->pos;
 	while (distance <= state->maxDistance) {
 		//check only if distance is at least minDistance
-		if (distance >= state->minDistance) {
-			unsigned int matchLen = CxiCompareMemory(curp - distance, curp, nMaxCompare);
+		if (distance < state->minDistance) goto NextCandidate;
 
-			if (matchLen > bestLength) {
-				bestLength = matchLen;
-				bestDistance = distance;
-				if (bestLength == nMaxCompare) break;
-			}
+		//filter candidate positions in heavily repeated regions
+		if (rlRun && bestLength >= state->minLength) goto NextCandidate; // without: takes 6:50
+
+		//confirm a match
+		//restrict length. We could do this once at the very end to give a
+		//valid match solution, but doing it here keeps the distance from being
+		//larger than it needs to be.
+		unsigned int matchLen = CxiCompareMemory(curp - distance, curp, maxLength);
+
+		if (matchLen > bestLength) {
+			bestLength = matchLen;
+			bestDistance = distance;
+			if (bestLength == maxLength) break;
 		}
 
+		//next candidate in the list
+	NextCandidate:
 		if (distance == state->maxDistance) break;
+
 		unsigned int next = CxiLzStateGetChain(state, distance);
 		if (next == UINT_MAX) break;
+		if (next > 1) rlRun = 0;
+
 		distance += next;
 	}
 
+	//if the best length we've found is less than the minimum allowed length, don't report a match
 	if (bestLength < state->minLength) {
 		bestLength = 1;
 		distance = 0;
