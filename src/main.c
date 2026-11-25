@@ -984,7 +984,14 @@ static void PtcEmitTextData(
 	unsigned int nCols = 32 / unit;
 
 	if (typeName == NULL) typeName = "";
-	fprintf(fpHeader, "//\n// Generated %s data%s\n//\n", typeName, compression ? " (compressed)" : "");
+	fprintf(fpHeader, "//\n// Generated %s data%s\n//\n", typeName,
+		(compression & CX_COMPRESSION_TYPES_MASK)
+		? (
+			(compression & CX_COMPRESSION_VRAM_SAFE)
+			? " (compressed, VRAM-safe)"
+			: " (compressed, VRAM-unsafe)"
+		)
+		: "");
 	
 	fprintf(fp, "const %s %s%s%s[] = ", type, prefix, name, suffix);
 	fprintf(fp, "{\n    ");
