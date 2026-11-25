@@ -1379,6 +1379,13 @@ static void PtcSwitch_onns(PtcOptions *options, TCHAR **argv) {
 	options->outMode = PTC_OUT_MODE_NNS;
 }
 
+static void PtcSwitch_ot(PtcOptions *options, TCHAR **argv) {
+	//compatibility name
+	PtcSwitch_onns(options, argv);
+
+	PtcPrint(PTC_LEVEL_WARN, _T("Using deprecated switch '-ot'. Use '-onns'.\n"));
+}
+
 static void PtcSwitch_cno(PtcOptions *options, TCHAR **argv) {
 	(void) argv;
 	
@@ -1671,7 +1678,7 @@ static const PtcSwitch sSwitches[] = {
 	{ _T("og"),    0, PtcSwitch_og   },
 	{ _T("od"),    0, PtcSwitch_od   },
 	{ _T("onns"),  0, PtcSwitch_onns },
-	{ _T("ot"),    0, PtcSwitch_onns },  // compatibility name
+	{ _T("ot"),    0, PtcSwitch_ot   },
 	
 	// ----- Compression switches
 	{ _T("cbios"), 0, PtcSwitch_cbios },
