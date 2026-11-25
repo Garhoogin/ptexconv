@@ -1768,6 +1768,7 @@ static void PtcOptParse(PtcOptions *opt, int argc, TCHAR **argv) {
 	opt->trimT = 0;                      // trim texture in the T axis if not a power of 2 in height
 	opt->outFixedPalette = 0;            // output fixed palette among other output files
 	opt->c0xp = -1;                      // is color 0 transparent reserved?
+	opt->pnam = strdup("");              // palette name
 
 	for (int i = 0; i < argc; i++) {
 		const TCHAR *arg = argv[i];
