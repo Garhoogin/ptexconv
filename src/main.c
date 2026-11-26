@@ -701,6 +701,37 @@ static char *PtcFileNameToCSymbolName(const TCHAR *filename) {
 	return sym;
 }
 
+static char *PtcFileNameToCMacroName(const TCHAR *filename) {
+	//file name component (stripped slash)
+	const TCHAR *name = PtcGetFileName(filename);
+
+	//we take the file name up until its last dot, or to end of string
+	const TCHAR *endp = _tcsrchr(name, _T('.'));
+	if (endp == NULL) endp = name + _tcslen(name);
+	
+	size_t len = endp - name;
+	char *sym = (char *) malloc(len + 1);
+
+	for (size_t i = 0; i < len; i++) {
+		TCHAR ch = name[i];
+		
+		//C symbol valid characters: 0-9, a-z, A-Z, _
+		int is09 = (ch >= _T('0') && ch <= _T('9'));
+		int isaz = (ch >= _T('a') && ch <= _T('z'));
+		int isAZ = (ch >= _T('A') && ch <= _T('Z'));
+		if (!is09 && !isaz && !isAZ && ch != _T('_')) ch = _T('_'); // convert to underscore
+
+		//upper
+		if (isaz) ch = (ch - _T('a')) + _T('A');
+
+		//put
+		sym[i] = (char) ch;
+	}
+
+	sym[len] = 0;  // null terminate
+	return sym;
+}
+
 
 // ----- file output routines
 
@@ -2140,10 +2171,12 @@ static void PtcConvTexture_OutC(PtcOptions *opt, TEXTURE *texture, int width, in
 	TCHAR *nameBufferH = PtcSuffixFileName(opt->outBase, _T(".h"));
 
 	//convert file name into a C symbol name
-	char *texName = PtcFileNameToCSymbolName(opt->srcFiles[0]);
+	char *texName      = PtcFileNameToCSymbolName(opt->srcFiles[0]);
+	char *texMacroName = PtcFileNameToCMacroName(opt->srcFiles[0]);
 
 	//if texture name doesn't start with a letter, prepend "tex_" to its name.
-	char *prefix = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "tex_" : "";
+	char *prefix      = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "tex_" : "";
+	char *macroPrefix = ((texName[0] < 'a' || texName[0] > 'z') && (texName[0] < 'A' || texName[0] > 'Z')) ? "TEX_" : "";
 
 	FILE *fp       = PtcOpenFileForWrite(nameBufferC);
 	FILE *fpHeader = PtcOpenFileForWrite(nameBufferH);
@@ -2152,6 +2185,15 @@ static void PtcConvTexture_OutC(PtcOptions *opt, TEXTURE *texture, int width, in
 	fprintf(fp,       texHeader, TxNameFromTexFormat(opt->texFmt), texture->palette.nColors, TEXW(texture->texels.texImageParam), height);
 	fprintf(fpHeader, texHeader, TxNameFromTexFormat(opt->texFmt), texture->palette.nColors, TEXW(texture->texels.texImageParam), height);
 	PtcEndEmitSourceFileHeading(fp, fpHeader);
+
+	//write texture info
+	fprintf(fpHeader, "\n");
+	fprintf(fpHeader, "#define %s%s_TEXIMAGE_PARAM      0x%08X\n", macroPrefix, texMacroName, texture->texels.texImageParam);
+	fprintf(fpHeader, "#define %s%s_TEXIMAGE_PARAM_MASK 0x%08X\n", macroPrefix, texMacroName,
+		GX_TEXIMAGE_PARAM_W_MASK | GX_TEXIMAGE_PARAM_H_MASK | GX_TEXIMAGE_PARAM_FMT_MASK | GX_TEXIMAGE_PARAM_C0XP_MASK
+	);
+	fprintf(fpHeader, "\n");
+	fprintf(fpHeader, "\n");
 
 	//write texel
 	PtcEmitTextData(fp, fpHeader, prefix, texName, "_texel", "texel",
@@ -2176,6 +2218,7 @@ static void PtcConvTexture_OutC(PtcOptions *opt, TEXTURE *texture, int width, in
 	PtcPrintFileWritten(nameBufferH);
 	
 	free(texName);
+	free(texMacroName);
 	free(nameBufferC);
 	free(nameBufferH);
 }
