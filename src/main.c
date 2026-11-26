@@ -149,7 +149,7 @@ long _ftol2_sse(float f) { //ugly hack
 #define NTFT_EXTENSION _T("_tex.bin")
 #define NTFI_EXTENSION _T("_idx.bin")
 
-#define VERSION "1.7.1.0"
+#define VERSION "1.7.2.0"
 
 static const char *g_helpString = ""
 	"DS Texture Converter command line utility version " VERSION "\n"
