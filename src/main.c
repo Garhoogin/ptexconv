@@ -1185,7 +1185,7 @@ static int PtcSampleBgColor(const void *scr, int bgType, unsigned int scrTileX, 
 			if (flip & 0x2) iPx ^= 070;
 			
 			cidx = (chr[iPx >> iShift] >> ((iPx % pxPerByte) * depth)) & ((1 << (depth)) - 1);
-			plttShift = 1 << depth;
+			plttShift = depth;
 			break;
 		}
 		case BGGEN_BGTYPE_BITMAP:
@@ -1994,7 +1994,11 @@ static void PtcConvBG_OutDIB(
 	(void) charSize;
 	(void) screenSize;
 	
-	int depth = (opt->bgType == BGGEN_BGTYPE_TEXT_16x16) ? 4 : 8;
+	//default to 8-bits depth
+	int depth = 8;
+	if (opt->bgType == BGGEN_BGTYPE_TEXT_16x16) {
+		depth = 4;
+	}
 	
 	//we physically cannot cram this many colors into a DIB palette
 	PTC_FAIL_IF(depth == 8 && (opt->nPalettes + opt->paletteBase) > 1, _T("Cannot output DIB for EXT palette BG.\n"));
